@@ -1,0 +1,48 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: pigeon-core
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/pigeon}
+    username: ${DB_USER:pigeon}
+    password: ${DB_PASS:pigeon}
+  flyway:
+    enabled: true
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:guest}
+    password: ${RABBIT_PASS:guest}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        default-requeue-rejected: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    distribution:
+      percentiles-histogram:
+        pigeon.outbox.dispatch.latency: true
+    tags:
+      application: pigeon-core
+
+pigeon:
+  outbox:
+    enabled: ${OUTBOX_ENABLED:true}
+    batch-size: ${OUTBOX_BATCH_SIZE:50}
+    poll-interval-ms: ${OUTBOX_POLL_MS:500}
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:8}
+    base-backoff-ms: ${OUTBOX_BASE_BACKOFF_MS:1000}
+    max-backoff-ms: ${OUTBOX_MAX_BACKOFF_MS:300000}
+    confirm-timeout-ms: ${OUTBOX_CONFIRM_TIMEOUT_MS:5000}
+  consumer:
+    enabled: ${CONSUMER_ENABLED:true}

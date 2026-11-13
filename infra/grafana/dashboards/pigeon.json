@@ -1,0 +1,105 @@
+{
+  "uid": "pigeon-overview",
+  "title": "Pigeon Overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "tags": ["pigeon"],
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Request rate by route (req/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{job}} {{uri}}",
+          "expr": "sum by (job, uri) (rate(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[1m]))" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Gateway rate-limit rejections (/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "rejected",
+          "expr": "sum(rate(pigeon_gateway_rate_limit_rejected_total[1m]))" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Circuit breaker state (1 = active)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{name}} {{state}}",
+          "expr": "resilience4j_circuitbreaker_state == 1" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Outbox pending",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{instance}}", "expr": "pigeon_outbox_pending" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Outbox lag (seconds)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{instance}}", "expr": "pigeon_outbox_lag_seconds" }
+      ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Outbox dead count",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "max(pigeon_outbox_dead)" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Dispatch latency p95",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pigeon_outbox_dispatch_latency_seconds_bucket[1m])))" }
+      ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "JVM heap used",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{job}} {{instance}}",
+          "expr": "sum by (job, instance) (jvm_memory_used_bytes{area=\"heap\"})" }
+      ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "JVM threads",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{job}} {{instance}}", "expr": "jvm_threads_live_threads" }
+      ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Process CPU usage",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{job}} {{instance}}", "expr": "process_cpu_usage" }
+      ]
+    }
+  ]
+}
