@@ -1,7 +1,7 @@
 <#
 Runs a k6 script from a separate grafana/k6 container (outside the app containers).
 Usage: .\loadtest\run.ps1 [smoke|spike|breaker]   (default: smoke)
-Env:   BASE_URL (default http://host.docker.internal:8080), PEAK_RPS, SLOW_MS
+Env:   BASE_URL (default http://host.docker.internal:8081), PEAK_RPS, SLOW_MS
 #>
 param([string]$Script = 'smoke')
 
@@ -11,7 +11,7 @@ if (-not (Test-Path (Join-Path $dir "$Script.js"))) {
     Write-Error "Unknown script '$Script'. Use smoke, spike or breaker."
 }
 
-$baseUrl = if ($env:BASE_URL) { $env:BASE_URL } else { 'http://host.docker.internal:8080' }
+$baseUrl = if ($env:BASE_URL) { $env:BASE_URL } else { 'http://host.docker.internal:8081' }
 $envArgs = @('-e', "BASE_URL=$baseUrl")
 if ($env:PEAK_RPS) { $envArgs += @('-e', "PEAK_RPS=$($env:PEAK_RPS)") }
 if ($env:SLOW_MS)  { $envArgs += @('-e', "SLOW_MS=$($env:SLOW_MS)") }

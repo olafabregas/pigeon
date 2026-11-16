@@ -5,7 +5,7 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
 
-const BASE = __ENV.BASE_URL || 'http://localhost:8080';
+const BASE = __ENV.BASE_URL || 'http://localhost:8081';
 const SLOW_MS = __ENV.SLOW_MS || '2000';
 
 const fallback503 = new Counter('breaker_fallback_503');

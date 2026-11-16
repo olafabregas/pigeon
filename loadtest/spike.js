@@ -4,7 +4,7 @@ import http from 'k6/http';
 import { check } from 'k6';
 import { Counter } from 'k6/metrics';
 
-const BASE = __ENV.BASE_URL || 'http://localhost:8080';
+const BASE = __ENV.BASE_URL || 'http://localhost:8081';
 const PEAK_RPS = parseInt(__ENV.PEAK_RPS || '500', 10);
 
 const created = new Counter('orders_created_201');

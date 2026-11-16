@@ -1,8 +1,9 @@
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /build
 COPY pom.xml .
+COPY pigeon-spring-boot-starter/pom.xml pigeon-spring-boot-starter/pom.xml
 COPY pigeon-core/pom.xml pigeon-core/pom.xml
-COPY pigeon-gateway/pom.xml pigeon-gateway/pom.xml
+COPY pigeon-spring-boot-starter/src pigeon-spring-boot-starter/src
 COPY pigeon-core/src pigeon-core/src
 RUN mvn -q -B -pl pigeon-core -am -DskipTests package
 

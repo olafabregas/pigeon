@@ -15,14 +15,6 @@ services:
       timeout: 3s
       retries: 20
 
-  redis:
-    image: redis:7
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
   rabbitmq:
     image: rabbitmq:3-management
     ports:
@@ -43,47 +35,16 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/pigeon
       DB_USER: pigeon
       DB_PASS: pigeon
-      REDIS_HOST: redis
       RABBIT_HOST: rabbitmq
-    expose:
-      - "8081"
+    ports:
+      - "8081:8081"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081 && printf \"GET /actuator/health HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q \"\\\"UP\\\"\" <&3'"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 40s
-
-  gateway:
-    build:
-      context: .
-      dockerfile: infra/Dockerfile.gateway
-    environment:
-      SERVER_PORT: "8080"
-      CORE_URL: http://core:8081
-      REDIS_HOST: redis
-      RABBIT_HOST: rabbitmq
-      DB_URL: jdbc:postgresql://postgres:5432/pigeon
-      DB_USER: pigeon
-      DB_PASS: pigeon
-      RATE_LIMIT_RPS: "10"
-      RATE_LIMIT_BURST: "20"
-    ports:
-      - "8080:8080"
-    depends_on:
-      redis:
-        condition: service_healthy
-      core:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET /actuator/health HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q \"\\\"UP\\\"\" <&3'"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -98,6 +59,9 @@ services:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
+    depends_on:
+      core:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
       interval: 10s

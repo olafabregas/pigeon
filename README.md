@@ -1,104 +1,158 @@
 # Pigeon
 
-**A resilient order-processing backend: rate-limited API gateway, transactional outbox, and RabbitMQ delivery that survives broker outages.**
+**Transactional outbox for Spring Boot + PostgreSQL + RabbitMQ.**
 
-> **Status:** work in progress. Services, load-test scripts and failure drills exist, but **no benchmark results have been published yet**. See [docs/LOAD_TEST_RESULTS.md](docs/LOAD_TEST_RESULTS.md) (template) and run the tests yourself.
+Add the starter, write one line in your database transaction, and Pigeon publishes to RabbitMQ with confirms, retries, and a dead-letter queue — even if the broker is down when you commit.
 
 ## Why "Pigeon"?
 
-Carrier pigeons are the classic reliable messenger: they keep trying until the message arrives. Pigeon does the same for events. Orders are written together with an outbox record, and a dispatcher keeps retrying (with backoff) until the broker confirms delivery, even if RabbitMQ is down for a while.
-
-## Architecture
+Carrier pigeons keep trying until the message arrives. Pigeon does the same for domain events: your business row and the outbox row commit together; a background poller delivers to RabbitMQ with backoff until confirmed.
 
 ```mermaid
 flowchart LR
-    Client([Client]) -->|:8080| GW[pigeon-gateway<br/>rate limit + circuit breaker]
-    GW <--> Redis[(Redis)]
-    GW --> Core[pigeon-core x N]
-    Core --> PG[(PostgreSQL<br/>orders + outbox)]
-    Core -->|dispatcher, confirms| RMQ{{RabbitMQ<br/>pigeon.events}}
-    RMQ --> Q[[pigeon.orders]] --> Core
-    RMQ -.-> DLQ[[pigeon.dlq]]
-    Prom[Prometheus] -.-> GW
-    Prom -.-> Core
-    Graf[Grafana] --> Prom
+    App["@Transactional<br/>Business + Outbox.write()"] -->|1. Atomic commit| PG[(PostgreSQL<br/>outbox_events)]
+    PG -->|2. SKIP LOCKED poll| Poller["Pigeon Poller"]
+    Poller -->|3. Confirmed publish| RMQ["RabbitMQ"]
+    RMQ -->|4. Deliver| Listener["Your @RabbitListener"]
 ```
 
-More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Full component breakdown, schema, and delivery semantics: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Features
+## Where it fits
 
-- Redis token-bucket rate limiting (atomic Lua script) per client IP; `429` + `Retry-After`
-- Resilience4j circuit breaker with `/fallback` (503 JSON)
-- Transactional outbox: order and event committed in one DB transaction
-- Dispatcher with publisher confirms, exponential backoff, DEAD state and DLQ
-- Idempotent consumer keyed by `messageId`
-- Horizontally scalable core service
-- Micrometer metrics, Prometheus and Grafana
-- k6 load tests run from a separate container, plus documented failure drills
+Any time you save something in Postgres and **must** notify another system afterward — without dual-write bugs or silent loss when RabbitMQ is down:
 
-## Quickstart
+| Domain | Example domain write | Example `eventType` | Typical listener |
+|---|---|---|---|
+| **Orders / ecommerce** | Create order | `order.created` | Email, fulfillment, inventory |
+| **Inventory / rentals** | Reserve or return stock | `rental.reserved`, `stock.adjusted` | Alerts, accounting sync |
+| **SaaS signup** | Create user or org | `user.registered` | Welcome email, provision tenant |
+| **Partner webhooks** | Status change | `shipment.updated` | Signed outbound webhook |
+| **Bookings** | Book appointment | `booking.confirmed` | SMS, calendar |
+| **Search / projections** | Update write model | `listing.updated` | Elasticsearch indexer |
+
+Pigeon does **not** send the email, call the webhook, or talk to ChatGPT — you write the `@RabbitListener`. It guarantees the event reaches RabbitMQ after a successful commit.
+
+## Use it in your app
+
+```xml
+<dependency>
+  <groupId>io.pigeon</groupId>
+  <artifactId>pigeon-spring-boot-starter</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+</dependency>
+```
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/app
+  rabbitmq:
+    host: localhost
+pigeon:
+  outbox:
+    enabled: true
+```
+
+Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: true`, and `template.mandatory: true` when you have not set them. Explicit values in your `application.yml` always win.
+
+```java
+@Service
+public class OrderService {
+  private final Outbox outbox;
+  private final JdbcTemplate jdbc;
+
+  @Transactional
+  public UUID create(String customerId, BigDecimal amount) {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO orders (id, customer_id, amount, status) VALUES (?,?,?,?)",
+        id, customerId, amount, "CREATED");
+    outbox.write("order", id.toString(), "order.created",
+        Map.of("orderId", id.toString(), "customerId", customerId, "amount", amount));
+    return id;
+  }
+}
+```
+
+Then add your own `@RabbitListener` for side effects. Bind a queue to exchange `pigeon.events` with the routing keys you use as `eventType` (e.g. `order.*`).
+
+Same pattern for other domains — only the aggregate type, event name, and payload change:
+
+```java
+outbox.write("rental", itemId, "rental.reserved", payload);
+outbox.write("user", userId, "user.registered", payload);
+outbox.write("shipment", shipmentId, "shipment.updated", payload);
+```
+
+### Broker down and DEAD events
+
+- **Broker unavailable / confirm timeout** → event stays `PENDING` (soft retry). Attempts are **not** burned.
+- **Permanent failure** (nack, unroutable) → attempts increment → `DEAD` after `max-attempts`, plus DLQ.
+- **Replay DEAD:** `Outbox.replayDead(id)` / `Outbox.replayAllDead()` (demo HTTP below).
+
+## Try the demo
 
 ```bash
 docker compose up --build
 ```
 
-Requires Docker with Compose. Java 21 / Maven are only needed to build outside Docker.
+| What | URL |
+|---|---|
+| Demo API | http://localhost:8081 |
+| Grafana | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+| RabbitMQ | http://localhost:15672 (`guest` / `guest`) |
 
-## Endpoints (via gateway, `http://localhost:8080`)
+**PowerShell** (recommended on Windows — `curl` is aliased to `Invoke-WebRequest`):
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/orders` | Create order, body `{"customerId":"c1","amount":10.5}` -> `201` |
-| GET | `/api/orders/{id}` | Fetch an order |
-| GET | `/api/ping` | Returns `pong` |
-| GET | `/api/slow?ms=2000` | Slow response (breaker demo) |
-| GET | `/api/fail` | Always `500` (breaker demo) |
-
-```bash
-curl -X POST http://localhost:8080/api/orders -H 'Content-Type: application/json' \
-  -d '{"customerId":"c1","amount":10.5}'
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8081/api/orders `
+  -ContentType application/json `
+  -Body '{"customerId":"c1","amount":10.5}'
 ```
 
-## Scaling
+**curl.exe:**
+
+```bash
+curl.exe -X POST http://localhost:8081/api/orders \
+  -H "Content-Type: application/json" \
+  -d "{\"customerId\":\"c1\",\"amount\":10.5}"
+```
+
+Replay all DEAD events (demo):
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8081/api/outbox/dead/replay-all
+```
+
+```bash
+curl.exe -X POST http://localhost:8081/api/outbox/dead/replay-all
+```
+
+Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
+
+### Scale the demo
 
 ```bash
 docker compose up --build --scale core=3
 ```
 
-The outbox dispatcher is designed to avoid duplicate dispatch across replicas; verify with the drills in [docs/DRILLS.md](docs/DRILLS.md).
+`SKIP LOCKED` lets replicas claim disjoint outbox batches.
 
-## Observability
+## What you get
 
-| Tool | URL |
-|---|---|
-| Grafana | http://localhost:3000 |
-| Prometheus | http://localhost:9090 |
-| RabbitMQ management | http://localhost:15672 (guest/guest) |
+- `Outbox.write(...)` in the same transaction as your domain write
+- Flyway migration for `outbox_events`
+- In-process poller with `SELECT ... FOR UPDATE SKIP LOCKED`
+- RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → backoff → `DEAD` + DLQ
+- Replay DEAD events via API / `Outbox.replay*`
+- Micrometer metrics: `pending`, `lag`, `dead`, dispatch latency, `dispatched{sent|deferred|failed|dead}`
 
-Key metrics: `pigeon_outbox_pending`, `pigeon_outbox_lag_seconds`, `pigeon_outbox_dead`, `pigeon_outbox_dispatch_latency`, `pigeon_gateway_rate_limit_rejected`.
+## Stack
 
-## Load testing
-
-k6 runs in its own `grafana/k6` container, outside the app containers.
-
-```bash
-./loadtest/run.sh smoke     # PowerShell: .\loadtest\run.ps1 smoke
-./loadtest/run.sh spike     # PEAK_RPS=500 by default
-./loadtest/run.sh breaker   # trips the circuit breaker
-```
-
-`429` responses are expected (rate limiting); thresholds fail on `5xx`. Override the target with `BASE_URL`. Failure drills (stop RabbitMQ, kill a replica, scale to 3) are in [docs/DRILLS.md](docs/DRILLS.md); record results in [docs/LOAD_TEST_RESULTS.md](docs/LOAD_TEST_RESULTS.md).
-
-## Roadmap
-
-- [ ] Publish measured load-test and drill results
-- [ ] Grafana dashboards committed and verified
-- [ ] Additional event types and consumers
-- [ ] Outbox cleanup / retention of `SENT` rows
-- [ ] Authentication on the gateway
-- [ ] CI pipeline
+Java 21, Spring Boot 3, PostgreSQL, RabbitMQ. That is the supported surface for v1.
 
 ## License
 
-Apache License 2.0, see [LICENSE](LICENSE). Copyright 2026 Olafabregas. (License choice is not final and may change.)
+Apache License 2.0 — see [LICENSE](LICENSE). Copyright 2026 Olafabregas.
