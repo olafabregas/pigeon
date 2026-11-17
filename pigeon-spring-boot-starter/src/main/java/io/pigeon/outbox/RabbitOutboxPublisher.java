@@ -51,24 +51,24 @@ public class RabbitOutboxPublisher implements OutboxPublisher {
         }
 
         Map<UUID, CorrelationData> pending = new HashMap<>();
-        try {
-            for (OutboxEvent e : events) {
+        Map<UUID, PublishOutcome> outcomes = new HashMap<>();
+        boolean resetAfterSendFailure = false;
+        for (OutboxEvent e : events) {
+            try {
                 CorrelationData cd = new CorrelationData(e.id().toString());
                 pending.put(e.id(), cd);
                 template.send(props.exchange(), e.eventType(), message(e), cd);
+            } catch (RuntimeException ex) {
+                pending.remove(e.id());
+                PublishOutcome outcome = isTransient(ex)
+                        ? PublishOutcome.TRANSIENT
+                        : PublishOutcome.PERMANENT;
+                outcomes.put(e.id(), outcome);
+                log.warn("publish send failed for {} ({}): {}", e.id(), outcome, ex.toString());
+                resetAfterSendFailure |= outcome == PublishOutcome.TRANSIENT;
             }
-        } catch (AmqpException ex) {
-            if (isTransient(ex)) {
-                log.warn("publish send failed (transient): {}", ex.toString());
-                resetSuggested.set(true);
-                resetConnection("send failed");
-                return PublishBatchResult.all(events, PublishOutcome.TRANSIENT);
-            }
-            log.warn("publish send failed (permanent): {}", ex.toString());
-            return PublishBatchResult.all(events, PublishOutcome.PERMANENT);
         }
 
-        Map<UUID, PublishOutcome> outcomes = new HashMap<>();
         boolean sawConfirmTimeout = false;
         for (Map.Entry<UUID, CorrelationData> en : pending.entrySet()) {
             if (sawConfirmTimeout) {
@@ -84,10 +84,10 @@ public class RabbitOutboxPublisher implements OutboxPublisher {
                 sawConfirmTimeout = true;
             }
         }
-        if (sawConfirmTimeout) {
+        if (sawConfirmTimeout || resetAfterSendFailure) {
             // Stale channels after broker restart often deliver messages but never complete confirms.
             resetSuggested.set(true);
-            resetConnection("confirm timeout");
+            resetConnection(sawConfirmTimeout ? "confirm timeout" : "send failed");
         }
         return PublishBatchResult.of(outcomes);
     }
