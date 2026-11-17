@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.OffsetDateTime;
+import java.time.Duration;
 
 final class OutboxCleanup {
     private static final Logger log = LoggerFactory.getLogger(OutboxCleanup.class);
@@ -20,7 +21,7 @@ final class OutboxCleanup {
     @Scheduled(fixedDelayString = "${pigeon.outbox.sent-cleanup-interval-ms:3600000}")
     void purgeSent() {
         int deleted = repository.deleteSentBefore(
-                OffsetDateTime.now().minusMillis(props.sentRetentionMs()));
+                OffsetDateTime.now().minus(Duration.ofMillis(props.sentRetentionMs())));
         if (deleted > 0) {
             log.info("purged {} SENT outbox event(s) older than {} ms",
                     deleted, props.sentRetentionMs());
