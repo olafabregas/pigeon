@@ -37,7 +37,7 @@ services:
       DB_PASS: pigeon
       RABBIT_HOST: rabbitmq
     ports:
-      - "8081:8081"
+      - "8081"
     depends_on:
       postgres:
         condition: service_healthy

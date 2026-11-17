@@ -1,6 +1,7 @@
 # Failure drills
 
-Run against the demo Compose stack (`core` on http://localhost:8081).
+Run against the demo Compose stack. Find the active core port with
+`docker compose port core 8081`.
 
 ## 1. Stop RabbitMQ mid-flight
 

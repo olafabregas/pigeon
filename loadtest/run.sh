@@ -1,13 +1,13 @@
 #!/usr/bin/env sh
 # Runs a k6 script from a separate grafana/k6 container (outside the app containers).
-# Usage: ./loadtest/run.sh [smoke|spike|breaker]   (default: smoke)
+# Usage: ./loadtest/run.sh [smoke|spike]   (default: smoke)
 # Env:   BASE_URL (default http://host.docker.internal:8081), PEAK_RPS, SLOW_MS
 set -eu
 
 SCRIPT="${1:-smoke}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-[ -f "$DIR/$SCRIPT.js" ] || { echo "Unknown script '$SCRIPT'. Use smoke, spike or breaker." >&2; exit 1; }
+[ -f "$DIR/$SCRIPT.js" ] || { echo "Unknown script '$SCRIPT'. Use smoke or spike." >&2; exit 1; }
 
 exec docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \

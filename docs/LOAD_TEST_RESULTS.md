@@ -1,6 +1,7 @@
 # Load Test Results
 
-> **Status: template. No measurements have been taken yet.** Fill each placeholder from real runs; do not commit estimated numbers.
+No benchmark results are committed yet. Run the current smoke or spike
+scenario, then record the generated k6 summary and environment details here.
 
 ## Environment
 
@@ -11,31 +12,28 @@
 | Host (CPU / RAM / OS) | `<fill in>` |
 | Docker version / resources | `<fill in>` |
 | Core replicas | `<n>` |
-| `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | `<fill in>` / `<fill in>` |
+| API base URL | value passed through `BASE_URL` |
 | k6 version | `<fill in>` |
 
 ## Scenarios
 
 | Script | Command | Peak RPS | Duration |
 |---|---|---|---|
-| smoke | `./loadtest/run.sh smoke` | `<fill in>` | `<fill in>` |
-| spike | `PEAK_RPS=<n> ./loadtest/run.sh spike` | `<fill in>` | `<fill in>` |
-| breaker | `./loadtest/run.sh breaker` | `<fill in>` | `<fill in>` |
+| smoke | `./loadtest/run.sh smoke` | low | 30s |
+| spike | `PEAK_RPS=<n> ./loadtest/run.sh spike` | configured by `PEAK_RPS` | 2m 40s |
 
 ## Results
 
-| Metric | smoke | spike | breaker |
+| Metric | smoke | spike |
 |---|---|---|---|
 | Total requests | `<>` | `<>` | `<>` |
 | Achieved RPS | `<>` | `<>` | `<>` |
-| 201 count | `<>` | `<>` | n/a |
-| 429 count (expected) | `<>` | `<>` | `<>` |
-| 5xx count | `<>` | `<>` | `<>` |
-| 503 (breaker fallback) | n/a | `<>` | `<>` |
-| p50 latency | `<>` | `<>` | `<>` |
-| p95 latency | `<>` | `<>` | `<>` |
-| p99 latency | `<>` | `<>` | `<>` |
-| Thresholds passed | `<yes/no>` | `<yes/no>` | `<yes/no>` |
+| 201 count | `<>` | `<>` |
+| 5xx count | `<>` | `<>` |
+| p50 latency | `<>` | `<>` |
+| p95 latency | `<>` | `<>` |
+| p99 latency | `<>` | `<>` |
+| Thresholds passed | `<yes/no>` | `<yes/no>` |
 
 ## Outbox health
 

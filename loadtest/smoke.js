@@ -8,7 +8,6 @@ const BASE = __ENV.BASE_URL || 'http://localhost:8081';
 export const options = {
   vus: 2,
   duration: '30s',
-  // 429 (rate limited) is an expected response (see setResponseCallback), not a failure.
   thresholds: {
     http_req_failed: ['rate<0.01'],
     'checks{check:no_5xx}': ['rate>0.99'],
@@ -16,7 +15,7 @@ export const options = {
   },
 };
 
-http.setResponseCallback(http.expectedStatuses(200, 201, 429));
+http.setResponseCallback(http.expectedStatuses(200, 201));
 
 export default function () {
   const payload = JSON.stringify({ customerId: `c${__VU}`, amount: 10.5 });
@@ -24,14 +23,14 @@ export default function () {
 
   const order = http.post(`${BASE}/api/orders`, payload, params);
   check(order, {
-    'order 201 or 429': (r) => r.status === 201 || r.status === 429,
+    'order 201': (r) => r.status === 201,
     'order 201 has id': (r) => r.status !== 201 || !!r.json('id'),
     no_5xx: (r) => r.status < 500,
   });
 
   const ping = http.get(`${BASE}/api/ping`);
   check(ping, {
-    'ping 200 or 429': (r) => r.status === 200 || r.status === 429,
+    'ping 200': (r) => r.status === 200,
     no_5xx: (r) => r.status < 500,
   });
 

@@ -1,5 +1,4 @@
-// Spike test: ramp to a high request rate against the gateway.
-// 429 is EXPECTED (rate limiter doing its job). 5xx is not.
+// Spike test: ramp to a high request rate against the demo API.
 import http from 'k6/http';
 import { check } from 'k6';
 import { Counter } from 'k6/metrics';
@@ -8,10 +7,9 @@ const BASE = __ENV.BASE_URL || 'http://localhost:8081';
 const PEAK_RPS = parseInt(__ENV.PEAK_RPS || '500', 10);
 
 const created = new Counter('orders_created_201');
-const limited = new Counter('rate_limited_429');
 const serverErrors = new Counter('server_errors_5xx');
 
-http.setResponseCallback(http.expectedStatuses(200, 201, 429));
+http.setResponseCallback(http.expectedStatuses(200, 201));
 
 export const options = {
   scenarios: {
@@ -45,14 +43,13 @@ export default function () {
       JSON.stringify({ customerId: `c${__VU}`, amount: Math.round(Math.random() * 10000) / 100 }),
       { headers: { 'Content-Type': 'application/json' } },
     );
-    check(res, { 'order 201 or 429': (r) => r.status === 201 || r.status === 429 });
+    check(res, { 'order 201': (r) => r.status === 201 });
   } else {
     res = http.get(`${BASE}/api/ping`);
-    check(res, { 'ping 200 or 429': (r) => r.status === 200 || r.status === 429 });
+    check(res, { 'ping 200': (r) => r.status === 200 });
   }
 
   check(res, { no_5xx: (r) => r.status < 500 });
   if (res.status === 201) created.add(1);
-  else if (res.status === 429) limited.add(1);
   else if (res.status >= 500) serverErrors.add(1);
 }
