@@ -41,7 +41,7 @@ class OutboxSkipLockedTest {
     static void init() {
         Flyway.configure()
                 .dataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword())
-                .locations("classpath:db/migration")
+                .locations("classpath:db/pigeon")
                 .load()
                 .migrate();
         DriverManagerDataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
@@ -80,6 +80,16 @@ class OutboxSkipLockedTest {
     private static OutboxProperties props(int batch, int maxAttempts) {
         return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 1000, 5,
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
+    }
+
+    @Test
+    void writeRequiresAnActiveTransaction() {
+        Outbox outbox = new Outbox(new OutboxRepository(jdbc), new com.fasterxml.jackson.databind.ObjectMapper());
+
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(
+                () -> outbox.write("order", "outside-tx", "order.created", "{}")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("active database transaction");
     }
 
     @Test

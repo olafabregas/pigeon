@@ -2,6 +2,7 @@ package io.pigeon.outbox;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.UUID;
 
@@ -20,6 +21,9 @@ public class Outbox {
 
     /** Inserts a PENDING outbox row. Must run inside the caller's transaction. */
     public UUID write(String aggregateType, String aggregateId, String eventType, String payloadJson) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Outbox.write must be called inside an active database transaction");
+        }
         return repository.insert(aggregateType, aggregateId, eventType, payloadJson);
     }
 
