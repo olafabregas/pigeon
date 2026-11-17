@@ -9,10 +9,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
- * Claims PENDING events with SELECT ... FOR UPDATE SKIP LOCKED inside one transaction, publishes them
- * with confirms and updates their state before commit. Safe to run concurrently in many instances.
+ * Claims PENDING events with SELECT ... FOR UPDATE SKIP LOCKED, leases them as PROCESSING,
+ * publishes after the claim transaction commits, and finalizes each result independently.
  *
  * <p>Broker-down / transient failures soft-retry without burning {@code maxAttempts}.
  * Only permanent failures (nack, unroutable) count toward DEAD.
@@ -42,41 +43,49 @@ public class OutboxDispatcher {
 
     /** @return number of events claimed in this batch */
     public int dispatchBatch() {
-        Integer n = tx.execute(status -> {
-            List<OutboxEvent> batch = repository.claimBatch(props.batchSize());
-            if (batch.isEmpty()) {
-                return 0;
-            }
-            PublishBatchResult result;
-            try {
-                result = publisher.publish(batch);
-            } catch (RuntimeException e) {
-                log.warn("publish batch failed (treating as transient): {}", e.toString());
-                result = PublishBatchResult.all(batch, PublishOutcome.TRANSIENT);
-            }
-            OffsetDateTime now = OffsetDateTime.now();
-            for (OutboxEvent e : batch) {
-                switch (result.get(e.id())) {
-                    case CONFIRMED -> {
-                        repository.markSent(e.id());
-                        latency.record(Duration.between(e.createdAt(), now));
-                        count("sent");
-                    }
-                    case TRANSIENT -> {
-                        repository.markSoftRetry(e.id(), now.plus(Duration.ofMillis(props.brokerDownBackoffMs())));
-                        count("deferred");
-                    }
-                    case PERMANENT -> handlePermanentFailure(e, now);
-                }
-            }
-            return batch.size();
+        UUID claimToken = UUID.randomUUID();
+        List<OutboxEvent> batch = tx.execute(status -> {
+            List<OutboxEvent> claimed = repository.claimBatch(props.batchSize(), claimToken);
+            return claimed;
         });
-        return n == null ? 0 : n;
+        if (batch == null || batch.isEmpty()) {
+            return 0;
+        }
+        PublishBatchResult result;
+        try {
+            result = publisher.publish(batch);
+        } catch (RuntimeException e) {
+            log.warn("publish batch failed (treating as transient): {}", e.toString());
+            result = PublishBatchResult.all(batch, PublishOutcome.TRANSIENT);
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        for (OutboxEvent e : batch) {
+            PublishOutcome outcome = result.get(e.id());
+            tx.executeWithoutResult(status -> finalizeEvent(e, claimToken, outcome, now));
+        }
+        return batch.size();
     }
 
-    private void handlePermanentFailure(OutboxEvent e, OffsetDateTime now) {
+    private void finalizeEvent(OutboxEvent e, java.util.UUID claimToken,
+                               PublishOutcome outcome, OffsetDateTime now) {
+        switch (outcome) {
+            case CONFIRMED -> {
+                repository.markSent(e.id(), claimToken);
+                latency.record(Duration.between(e.createdAt(), now));
+                count("sent");
+            }
+            case TRANSIENT -> {
+                repository.markSoftRetry(e.id(), claimToken,
+                        now.plus(Duration.ofMillis(props.brokerDownBackoffMs())));
+                count("deferred");
+            }
+            case PERMANENT -> handlePermanentFailure(e, claimToken, now);
+        }
+    }
+
+    private void handlePermanentFailure(OutboxEvent e, UUID claimToken, OffsetDateTime now) {
         if (e.attempts() + 1 >= props.maxAttempts()) {
-            repository.markDead(e.id());
+            repository.markDead(e.id(), claimToken);
             try {
                 publisher.deadLetter(e);
             } catch (RuntimeException ex) {
@@ -86,7 +95,7 @@ public class OutboxDispatcher {
                     e.id(), e.attempts() + 1);
             count("dead");
         } else {
-            repository.markRetry(e.id(), now.plus(backoff(e.attempts() + 1)));
+            repository.markRetry(e.id(), claimToken, now.plus(backoff(e.attempts() + 1)));
             count("failed");
         }
     }
