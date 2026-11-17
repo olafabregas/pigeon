@@ -1,17 +1,18 @@
 # Manual test checklist
 
 ```powershell
-cd C:\Users\ayori\Projects\pigeon
+# Run these commands from the repository root.
 docker compose down -v
 docker compose up --build -d
 ```
 
-Wait until `docker compose ps` shows healthy. API: **http://localhost:8081**
+Wait until `docker compose ps` shows healthy. Find the API port with
+`docker compose port core 8081`.
 
 ## 1. Happy path
 
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:8081/api/orders `
+Invoke-RestMethod -Method Post http://localhost:<core-port>/api/orders `
   -ContentType application/json -Body '{"customerId":"me","amount":12.5}'
 ```
 
@@ -28,7 +29,7 @@ Expect **SENT**. RabbitMQ UI: `pigeon.orders` near 0.
 ```powershell
 docker compose stop rabbitmq
 1..5 | ForEach-Object {
-  Invoke-RestMethod -Method Post http://localhost:8081/api/orders `
+  Invoke-RestMethod -Method Post http://localhost:<core-port>/api/orders `
     -ContentType application/json -Body '{"customerId":"drill","amount":1}'
   Start-Sleep -Seconds 1
 }
@@ -45,7 +46,7 @@ Grafana: `dispatched{result="deferred"}` rises during the outage; `dead` should 
 ### Replay DEAD (if any from earlier permanent failures)
 
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:8081/api/outbox/dead/replay-all
+Invoke-RestMethod -Method Post http://localhost:<core-port>/api/outbox/dead/replay-all
 ```
 
 Or one id: `POST /api/outbox/dead/{id}/replay`
@@ -54,6 +55,8 @@ Or one id: `POST /api/outbox/dead/{id}/replay`
 
 ```powershell
 docker compose up -d --scale core=3
+# Scaled replicas use dynamic host ports:
+docker compose port core 8081
 # create orders slowly, then:
 docker compose exec -T postgres psql -U pigeon -c "select count(*) from orders; select count(*) from outbox_events where status='SENT'; select count(*) from processed_messages;"
 ```
