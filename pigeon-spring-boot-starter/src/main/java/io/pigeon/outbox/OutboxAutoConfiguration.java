@@ -82,6 +82,12 @@ public class OutboxAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean
+    OutboxCleanup outboxCleanup(OutboxRepository repository, OutboxProperties props) {
+        return new OutboxCleanup(repository, props);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(name = "pigeonEventsExchange")
     TopicExchange pigeonEventsExchange(OutboxProperties props) {
         return ExchangeBuilder.topicExchange(props.exchange()).durable(true).build();

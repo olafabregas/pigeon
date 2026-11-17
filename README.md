@@ -31,7 +31,7 @@ Any time you save something in Postgres and **must** notify another system after
 | **Bookings** | Book appointment | `booking.confirmed` | SMS, calendar |
 | **Search / projections** | Update write model | `listing.updated` | Elasticsearch indexer |
 
-Pigeon does **not** send the email, call the webhook, or talk to ChatGPT — you write the `@RabbitListener`. It guarantees the event reaches RabbitMQ after a successful commit.
+Pigeon does **not** send the email, call the webhook, or talk to ChatGPT — you write the `@RabbitListener`. Delivery is **at least once**: if the process crashes after RabbitMQ confirms a message but before Pigeon marks the row `SENT`, the message is published again. Consumers must deduplicate by the event `messageId` and make side effects idempotent.
 
 ## Use it in your app
 
@@ -52,9 +52,17 @@ spring:
 pigeon:
   outbox:
     enabled: true
+    sent-retention-ms: 604800000
 ```
 
 Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: true`, and `template.mandatory: true` when you have not set them. Explicit values in your `application.yml` always win.
+
+The starter runs its schema migration from `classpath:db/pigeon` using
+Pigeon-reserved versions, so it does not compete with an application's
+`classpath:db/migration/V1__...` migration. Set
+`pigeon.outbox.flyway.enabled=false` if schema management is handled separately.
+Confirmed `SENT` rows are retained for seven days by default and then purged
+hourly. Adjust `sent-retention-ms` or set it to `0` for immediate cleanup.
 
 ```java
 @Service
@@ -91,15 +99,26 @@ outbox.write("shipment", shipmentId, "shipment.updated", payload);
 - **Permanent failure** (nack, unroutable) → attempts increment → `DEAD` after `max-attempts`, plus DLQ.
 - **Replay DEAD:** `Outbox.replayDead(id)` / `Outbox.replayAllDead()` (demo HTTP below).
 
+The dispatcher claims rows in a short database transaction, releases the row
+locks before waiting for RabbitMQ confirms, and finalizes each event in its own
+transaction. A claimed row is leased for one minute and becomes claimable
+again if a process crashes.
+
 ## Try the demo
 
 ```bash
 docker compose up --build
 ```
 
+The API port is assigned by Compose. Retrieve it with:
+
+```powershell
+docker compose port core 8081
+```
+
 | What | URL |
 |---|---|
-| Demo API | http://localhost:8081 |
+| Demo API | the host/port printed by `docker compose port core 8081` |
 | Grafana | http://localhost:3000 |
 | Prometheus | http://localhost:9090 |
 | RabbitMQ | http://localhost:15672 (`guest` / `guest`) |
@@ -107,7 +126,7 @@ docker compose up --build
 **PowerShell** (recommended on Windows — `curl` is aliased to `Invoke-WebRequest`):
 
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:8081/api/orders `
+Invoke-RestMethod -Method Post http://localhost:<core-port>/api/orders `
   -ContentType application/json `
   -Body '{"customerId":"c1","amount":10.5}'
 ```
@@ -115,7 +134,7 @@ Invoke-RestMethod -Method Post http://localhost:8081/api/orders `
 **curl.exe:**
 
 ```bash
-curl.exe -X POST http://localhost:8081/api/orders \
+curl.exe -X POST http://localhost:<core-port>/api/orders \
   -H "Content-Type: application/json" \
   -d "{\"customerId\":\"c1\",\"amount\":10.5}"
 ```
@@ -123,14 +142,12 @@ curl.exe -X POST http://localhost:8081/api/orders \
 Replay all DEAD events (demo):
 
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:8081/api/outbox/dead/replay-all
+Invoke-RestMethod -Method Post http://localhost:<core-port>/api/outbox/dead/replay-all
 ```
 
 ```bash
-curl.exe -X POST http://localhost:8081/api/outbox/dead/replay-all
+curl.exe -X POST http://localhost:<core-port>/api/outbox/dead/replay-all
 ```
-
-Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 
 ### Scale the demo
 
@@ -138,14 +155,19 @@ Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 docker compose up --build --scale core=3
 ```
 
-`SKIP LOCKED` lets replicas claim disjoint outbox batches.
+Scaled replicas use Compose-assigned host ports, so all three can start.
+Use `docker compose port core 8081` to find a replica's port. `SKIP LOCKED`
+lets replicas claim disjoint outbox batches.
+
+Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 
 ## What you get
 
 - `Outbox.write(...)` in the same transaction as your domain write
-- Flyway migration for `outbox_events`
-- In-process poller with `SELECT ... FOR UPDATE SKIP LOCKED`
+- Flyway migration for `outbox_events` under `db/pigeon`, isolated from app migrations
+- In-process poller with leased `SELECT ... FOR UPDATE SKIP LOCKED` claims
 - RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → backoff → `DEAD` + DLQ
+- At-least-once delivery with an event `messageId`; consumers must be idempotent
 - Replay DEAD events via API / `Outbox.replay*`
 - Micrometer metrics: `pending`, `lag`, `dead`, dispatch latency, `dispatched{sent|deferred|failed|dead}`
 

@@ -79,6 +79,7 @@ class OutboxSkipLockedTest {
 
     private static OutboxProperties props(int batch, int maxAttempts) {
         return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 1000, 5,
+                604_800_000, 3_600_000,
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 
@@ -189,5 +190,20 @@ class OutboxSkipLockedTest {
                 .isEqualTo("PENDING");
         assertThat(jdbc.queryForObject("SELECT attempts FROM outbox_events WHERE id=?", Integer.class, id))
                 .isEqualTo(0);
+    }
+
+    @Test
+    void cleanupDeletesOnlyExpiredSentRows() {
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID expired = repo.insert("order", "expired", "order.created", "{}");
+        UUID current = repo.insert("order", "current", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET status='SENT', sent_at=now() - interval '2 days' WHERE id=?", expired);
+        jdbc.update("UPDATE outbox_events SET status='SENT', sent_at=now() WHERE id=?", current);
+
+        assertThat(repo.deleteSentBefore(java.time.OffsetDateTime.now().minusDays(1))).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE id=?", Integer.class, expired))
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE id=?", Integer.class, current))
+                .isEqualTo(1);
     }
 }

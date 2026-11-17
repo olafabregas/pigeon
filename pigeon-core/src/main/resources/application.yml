@@ -4,9 +4,6 @@ server:
 spring:
   application:
     name: pigeon-core
-  autoconfigure:
-    # Demo wires outbox beans explicitly in DemoOutboxConfig; still uses starter types + Flyway DDL.
-    exclude: io.pigeon.outbox.OutboxAutoConfiguration
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/pigeon}
     username: ${DB_USER:pigeon}
@@ -51,5 +48,7 @@ pigeon:
     max-backoff-ms: ${OUTBOX_MAX_BACKOFF_MS:300000}
     confirm-timeout-ms: ${OUTBOX_CONFIRM_TIMEOUT_MS:5000}
     broker-down-backoff-ms: ${OUTBOX_BROKER_DOWN_BACKOFF_MS:5000}
+    sent-retention-ms: ${OUTBOX_SENT_RETENTION_MS:604800000}
+    sent-cleanup-interval-ms: ${OUTBOX_SENT_CLEANUP_INTERVAL_MS:3600000}
   consumer:
     enabled: ${CONSUMER_ENABLED:true}

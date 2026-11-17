@@ -5,7 +5,11 @@
 - Stack: Java 21, Spring Boot 3, PostgreSQL, RabbitMQ
 
 ## Outbox table
-`outbox_events(id uuid pk, aggregate_type, aggregate_id, event_type, payload jsonb, status [PENDING|SENT|DEAD], attempts, next_attempt_at, created_at, sent_at)`
+`outbox_events(id uuid pk, aggregate_type, aggregate_id, event_type, payload jsonb, status [PENDING|PROCESSING|SENT|DEAD], attempts, next_attempt_at, created_at, sent_at)`
+
+SENT rows are retained for seven days by default and purged hourly. Configure
+`pigeon.outbox.sent-retention-ms` and
+`pigeon.outbox.sent-cleanup-interval-ms` to change this policy.
 
 ## Rabbit soft defaults (starter)
 When unset, `RabbitConfirmDefaultsEnvironmentPostProcessor` sets:
@@ -30,5 +34,5 @@ Replay: `Outbox.replayDead(id)` / `replayAllDead()`. Demo HTTP: `POST /api/outbo
 
 ## Demo (`pigeon-core`)
 - Port `8081`
-- `POST /api/orders`, `GET /api/orders/{id}`, `GET /api/ping`, `/api/slow`, `/api/fail`
+- `POST /api/orders`, `GET /api/orders/{id}`, `GET /api/ping`
 - Demo queue `pigeon.orders` bound to `order.*`
