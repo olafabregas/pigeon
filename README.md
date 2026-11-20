@@ -41,11 +41,21 @@ different order. Consumers that require ordering must enforce it explicitly.
 
 ## Use it in your app
 
+Pigeon is distributed through [JitPack](https://jitpack.io/), which builds
+directly from the Git tag. Add the repository and the dependency:
+
 ```xml
+<repositories>
+  <repository>
+    <id>jitpack.io</id>
+    <url>https://jitpack.io</url>
+  </repository>
+</repositories>
+
 <dependency>
-  <groupId>io.pigeon</groupId>
+  <groupId>com.github.olafabregas.pigeon</groupId>
   <artifactId>pigeon-spring-boot-starter</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 </dependency>
 ```
 
