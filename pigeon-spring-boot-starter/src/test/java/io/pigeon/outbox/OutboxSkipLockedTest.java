@@ -210,6 +210,7 @@ class OutboxSkipLockedTest {
 
     @Test
     void staleClaimCannotBeMarkedSentByItsOldOwner() {
+        jdbc.update("DELETE FROM outbox_events");
         UUID id = new OutboxRepository(jdbc).insert("order", "claim", "order.created", "{}");
         UUID oldOwner = UUID.randomUUID();
         OutboxRepository repo = new OutboxRepository(jdbc);
