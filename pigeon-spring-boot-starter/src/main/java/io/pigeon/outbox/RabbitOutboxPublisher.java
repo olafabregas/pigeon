@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class RabbitOutboxPublisher implements OutboxPublisher {
     private static final Logger log = LoggerFactory.getLogger(RabbitOutboxPublisher.class);
     public static final String MESSAGE_ID_HEADER = "messageId";
+    private static final long RETURN_GRACE_MS = 50;
 
     private final RabbitTemplate template;
     private final OutboxProperties props;
@@ -95,8 +96,21 @@ public class RabbitOutboxPublisher implements OutboxPublisher {
     private PublishOutcome resolveConfirm(UUID id, CorrelationData cd, long timeoutMs) {
         try {
             CorrelationData.Confirm c = cd.getFuture().get(timeoutMs, TimeUnit.MILLISECONDS);
-            if (c.isAck() && cd.getReturned() == null) {
-                return PublishOutcome.CONFIRMED;
+            if (c.isAck()) {
+                long remaining = RETURN_GRACE_MS;
+                while (cd.getReturned() == null && remaining > 0) {
+                    long started = System.nanoTime();
+                    try {
+                        Thread.sleep(Math.min(5, remaining));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    remaining -= (System.nanoTime() - started) / 1_000_000;
+                }
+                if (cd.getReturned() == null) {
+                    return PublishOutcome.CONFIRMED;
+                }
             }
             log.warn("event {} not confirmed: ack={} returned={} reason={}",
                     id, c.isAck(), cd.getReturned() != null, c.getReason());

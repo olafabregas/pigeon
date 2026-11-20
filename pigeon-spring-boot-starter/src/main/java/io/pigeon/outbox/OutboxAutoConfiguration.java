@@ -14,6 +14,7 @@ import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.actuate.autoconfigure.metrics.CompositeMeterRegistryAutoConfiguration;
 import org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -34,7 +35,8 @@ import javax.sql.DataSource;
 @AutoConfiguration(after = {
         DataSourceAutoConfiguration.class,
         JdbcTemplateAutoConfiguration.class,
-        RabbitAutoConfiguration.class
+        RabbitAutoConfiguration.class,
+        CompositeMeterRegistryAutoConfiguration.class
 })
 @ConditionalOnClass({DataSource.class, JdbcTemplate.class, RabbitTemplate.class})
 @EnableConfigurationProperties(OutboxProperties.class)

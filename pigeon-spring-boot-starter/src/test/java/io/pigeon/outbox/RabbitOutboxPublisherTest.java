@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpIOException;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageBuilder;
+import org.springframework.amqp.core.ReturnedMessage;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.connection.Connection;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -73,6 +75,36 @@ class RabbitOutboxPublisherTest {
         assertThat(result.get(events.get(1).id())).isEqualTo(PublishOutcome.TRANSIENT);
         assertThat(result.get(events.get(2).id())).isEqualTo(PublishOutcome.CONFIRMED);
         assertThat(sends).hasValue(3);
+    }
+
+    @Test
+    void delayedUnroutableReturnPreventsFalseConfirm() {
+        RabbitTemplate template = mock(RabbitTemplate.class);
+        ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
+        Connection connection = mock(Connection.class);
+        when(template.getConnectionFactory()).thenReturn(connectionFactory);
+        when(connectionFactory.createConnection()).thenReturn(connection);
+        doAnswer(invocation -> {
+            CorrelationData correlation = invocation.getArgument(3);
+            correlation.getFuture().complete(new CorrelationData.Confirm(true, null));
+            new Thread(() -> {
+                try {
+                    Thread.sleep(10);
+                    correlation.setReturned(new ReturnedMessage(
+                            MessageBuilder.withBody("{}".getBytes()).build(),
+                            312, "NO_ROUTE", "pigeon.events", "order.created"));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }).start();
+            return null;
+        }).when(template).send(anyString(), anyString(), any(Message.class), any(CorrelationData.class));
+
+        OutboxEvent event = event();
+        PublishBatchResult result = new RabbitOutboxPublisher(template, OutboxProperties.defaults())
+                .publish(List.of(event));
+
+        assertThat(result.get(event.id())).isEqualTo(PublishOutcome.PERMANENT);
     }
 
     private static OutboxEvent event() {
