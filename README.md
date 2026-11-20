@@ -1,5 +1,6 @@
 # Pigeon
 
+[![](https://jitpack.io/v/olafabregas/pigeon.svg)](https://jitpack.io/#olafabregas/pigeon)
 ![CI](https://github.com/olafabregas/pigeon/actions/workflows/ci.yml/badge.svg)
 
 **Transactional outbox for Spring Boot + PostgreSQL + RabbitMQ.**
