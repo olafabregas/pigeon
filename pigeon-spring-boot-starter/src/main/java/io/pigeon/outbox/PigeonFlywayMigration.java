@@ -18,8 +18,8 @@ final class PigeonFlywayMigration implements InitializingBean {
     public void afterPropertiesSet() {
         Flyway.configure()
                 .dataSource(dataSource)
-                .locations(properties.flywayLocations().split(","))
-                .table(properties.flywayTable())
+                .locations(properties.flyway().locations().split(","))
+                .table(properties.flyway().table())
                 .baselineOnMigrate(true)
                 .load()
                 .migrate();

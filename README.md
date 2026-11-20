@@ -81,6 +81,10 @@ pigeon:
       table: pigeon_schema_history
 ```
 
+> **Required:** `pigeon.outbox.scheduling.enabled: true`. It has no default, and
+> without it the dispatcher never starts, so events are written to the outbox
+> but never published.
+
 Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: true`, and `template.mandatory: true` when you have not set them. Explicit values in your `application.yml` always win.
 
 > **Existing demo databases:** the new Pigeon migration location does not

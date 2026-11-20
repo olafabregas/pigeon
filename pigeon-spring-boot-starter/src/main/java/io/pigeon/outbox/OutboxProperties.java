@@ -17,18 +17,23 @@ public record OutboxProperties(
         @DefaultValue("604800000") long sentRetentionMs,
         @DefaultValue("3600000") long sentCleanupIntervalMs,
         @DefaultValue("60000") long claimLeaseMs,
-        @DefaultValue("false") boolean flywayEnabled,
-        @DefaultValue("classpath:db/pigeon") String flywayLocations,
-        @DefaultValue("pigeon_schema_history") String flywayTable,
+        @DefaultValue Flyway flyway,
         @DefaultValue("pigeon.events") String exchange,
         @DefaultValue("pigeon.dlx") String deadLetterExchange,
         @DefaultValue("pigeon.dlq") String deadLetterQueue) {
+
+    /** Binds {@code pigeon.outbox.flyway.*}. */
+    public record Flyway(
+            @DefaultValue("false") boolean enabled,
+            @DefaultValue("classpath:db/pigeon") String locations,
+            @DefaultValue("pigeon_schema_history") String table) {
+    }
 
     public static OutboxProperties defaults() {
         return new OutboxProperties(true, 50, 500, 8, 1000, 300_000, 5000, 5000,
                 604_800_000, 3_600_000,
                 60_000,
-                false, "classpath:db/pigeon", "pigeon_schema_history",
+                new Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 }

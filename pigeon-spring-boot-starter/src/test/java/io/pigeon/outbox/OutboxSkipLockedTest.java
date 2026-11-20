@@ -81,7 +81,7 @@ class OutboxSkipLockedTest {
         return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 1000, 5,
                 604_800_000, 3_600_000,
                 60_000,
-                false, "classpath:db/pigeon", "pigeon_schema_history",
+                new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 
