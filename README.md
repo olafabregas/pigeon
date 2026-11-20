@@ -33,6 +33,10 @@ Any time you save something in Postgres and **must** notify another system after
 
 Pigeon does **not** send the email, call the webhook, or talk to ChatGPT — you write the `@RabbitListener`. Delivery is **at least once**: if the process crashes after RabbitMQ confirms a message but before Pigeon marks the row `SENT`, the message is published again. Consumers must deduplicate by the event `messageId` and make side effects idempotent.
 
+Pigeon does not guarantee per-aggregate ordering. Multiple replicas and
+`SKIP LOCKED` dispatch batches may publish events for the same aggregate in a
+different order. Consumers that require ordering must enforce it explicitly.
+
 ## Use it in your app
 
 ```xml
@@ -49,10 +53,17 @@ spring:
     url: jdbc:postgresql://localhost:5432/app
   rabbitmq:
     host: localhost
+  flyway:
+    locations: classpath:db/migration
 pigeon:
   outbox:
     enabled: true
     sent-retention-ms: 604800000
+    claim-lease-ms: 60000
+    flyway:
+      enabled: true
+      locations: classpath:db/pigeon
+      table: pigeon_schema_history
 ```
 
 Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: true`, and `template.mandatory: true` when you have not set them. Explicit values in your `application.yml` always win.
@@ -62,10 +73,10 @@ Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: t
 > For a throwaway demo database, run `docker compose down -v` before starting
 > the updated stack.
 
-The starter runs its schema migration from `classpath:db/pigeon` using
-Pigeon-reserved versions, so it does not compete with an application's
-`classpath:db/migration/V1__...` migration. Set
-`pigeon.outbox.flyway.enabled=false` if schema management is handled separately.
+The starter migration is opt-in. It runs separately from Spring Boot Flyway
+from `classpath:db/pigeon`, using `pigeon_schema_history`, so it does not
+compete with an application's `classpath:db/migration/V1__...` migration.
+Set `pigeon.outbox.flyway.enabled=false` to manage Pigeon SQL yourself.
 Confirmed `SENT` rows are retained for seven days by default and then purged
 hourly. Adjust `sent-retention-ms` or set it to `0` for immediate cleanup.
 
@@ -106,8 +117,8 @@ outbox.write("shipment", shipmentId, "shipment.updated", payload);
 
 The dispatcher claims rows in a short database transaction, releases the row
 locks before waiting for RabbitMQ confirms, and finalizes each event in its own
-transaction. A claimed row is leased for one minute and becomes claimable
-again if a process crashes.
+transaction. A claimed row is leased for `pigeon.outbox.claim-lease-ms`
+(default 60 seconds) and becomes claimable again if a process crashes.
 
 ## Try the demo
 
@@ -173,7 +184,7 @@ Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 - In-process poller with leased `SELECT ... FOR UPDATE SKIP LOCKED` claims
 - RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → backoff → `DEAD` + DLQ
 - At-least-once delivery with an event `messageId`; consumers must be idempotent
-- Replay DEAD events via API / `Outbox.replay*`
+- Replay DEAD events via demo-only API / `Outbox.replay*`
 - Micrometer metrics: `pending`, `lag`, `dead`, dispatch latency, `dispatched{sent|deferred|failed|dead}`
 
 ## Stack

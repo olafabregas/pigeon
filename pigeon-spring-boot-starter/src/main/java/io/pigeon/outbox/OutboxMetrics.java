@@ -14,7 +14,7 @@ public final class OutboxMetrics {
                 .description("DEAD outbox events")
                 .register(registry);
         Gauge.builder("pigeon.outbox.lag.seconds", () -> safe(repo::oldestPendingAgeSeconds))
-                .description("Age of oldest PENDING outbox event")
+                .description("Age of oldest PENDING or PROCESSING outbox event")
                 .baseUnit("seconds")
                 .register(registry);
     }

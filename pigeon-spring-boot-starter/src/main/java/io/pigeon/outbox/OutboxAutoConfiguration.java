@@ -14,7 +14,6 @@ import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.actuate.autoconfigure.metrics.CompositeMeterRegistryAutoConfiguration;
 import org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -24,6 +23,8 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,15 +33,21 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 
+@Configuration(proxyBeanMethods = false)
+@ConditionalOnProperty(name = "pigeon.outbox.scheduling.enabled", havingValue = "true")
+@EnableScheduling
+class PigeonSchedulingConfiguration {
+}
+
 @AutoConfiguration(after = {
         DataSourceAutoConfiguration.class,
         JdbcTemplateAutoConfiguration.class,
-        RabbitAutoConfiguration.class,
-        CompositeMeterRegistryAutoConfiguration.class
-})
+        RabbitAutoConfiguration.class
+}, afterName = "org.springframework.boot.actuate.autoconfigure.metrics.CompositeMeterRegistryAutoConfiguration")
 @ConditionalOnClass({DataSource.class, JdbcTemplate.class, RabbitTemplate.class})
+@ConditionalOnBean(DataSource.class)
 @EnableConfigurationProperties(OutboxProperties.class)
-@EnableScheduling
+@Import(PigeonSchedulingConfiguration.class)
 public class OutboxAutoConfiguration {
 
     @Bean
@@ -87,6 +94,12 @@ public class OutboxAutoConfiguration {
     @ConditionalOnMissingBean
     OutboxCleanup outboxCleanup(OutboxRepository repository, OutboxProperties props) {
         return new OutboxCleanup(repository, props);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "pigeon.outbox.flyway.enabled", havingValue = "true")
+    PigeonFlywayMigration pigeonFlywayMigration(DataSource dataSource, OutboxProperties props) {
+        return new PigeonFlywayMigration(dataSource, props);
     }
 
     @Bean

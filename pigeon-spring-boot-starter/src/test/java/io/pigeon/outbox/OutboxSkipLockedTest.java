@@ -81,6 +81,7 @@ class OutboxSkipLockedTest {
         return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 1000, 5,
                 604_800_000, 3_600_000,
                 60_000,
+                false, "classpath:db/pigeon", "pigeon_schema_history",
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 
@@ -223,5 +224,24 @@ class OutboxSkipLockedTest {
         assertThat(repo.markSent(id, oldOwner)).isZero();
         assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
                 .isEqualTo("PROCESSING");
+    }
+
+    @Test
+    void businessWriteAndOutboxWriteRollBackTogether() {
+        jdbc.execute("CREATE TABLE IF NOT EXISTS business_write (id varchar(100) PRIMARY KEY)");
+        jdbc.update("DELETE FROM business_write");
+        jdbc.update("DELETE FROM outbox_events");
+        Outbox outbox = new Outbox(new OutboxRepository(jdbc),
+                new com.fasterxml.jackson.databind.ObjectMapper());
+
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() ->
+                new TransactionTemplate(tm).execute(status -> {
+                    jdbc.update("INSERT INTO business_write (id) VALUES (?)", "same-tx");
+                    outbox.write("order", "same-tx", "order.created", "{}");
+                    throw new IllegalStateException("rollback");
+                }))).isInstanceOf(IllegalStateException.class);
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM business_write", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events", Integer.class)).isZero();
     }
 }

@@ -87,18 +87,22 @@ public class OutboxDispatcher {
 
     private void handlePermanentFailure(OutboxEvent e, UUID claimToken, OffsetDateTime now) {
         if (e.attempts() + 1 >= props.maxAttempts()) {
-            repository.markDead(e.id(), claimToken);
-            try {
-                publisher.deadLetter(e);
-            } catch (RuntimeException ex) {
-                log.warn("dead-letter publish failed for {}: {}", e.id(), ex.toString());
+            int updated = repository.markDead(e.id(), claimToken);
+            if (updated > 0) {
+                try {
+                    publisher.deadLetter(e);
+                } catch (RuntimeException ex) {
+                    log.warn("dead-letter publish failed for {}: {}", e.id(), ex.toString());
+                }
+                log.error("outbox event {} DEAD after {} attempts (permanent publish failure)",
+                        e.id(), e.attempts() + 1);
+                count("dead");
             }
-            log.error("outbox event {} DEAD after {} attempts (permanent publish failure)",
-                    e.id(), e.attempts() + 1);
-            count("dead");
         } else {
-            repository.markRetry(e.id(), claimToken, now.plus(backoff(e.attempts() + 1)));
-            count("failed");
+            int updated = repository.markRetry(e.id(), claimToken, now.plus(backoff(e.attempts() + 1)));
+            if (updated > 0) {
+                count("failed");
+            }
         }
     }
 

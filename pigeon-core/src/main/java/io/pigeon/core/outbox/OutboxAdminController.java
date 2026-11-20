@@ -7,12 +7,14 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.Map;
 import java.util.UUID;
 
 /** Demo admin endpoints to requeue DEAD outbox events after a broker outage. */
 @RestController
+@ConditionalOnProperty(name = "pigeon.demo.enabled", havingValue = "true")
 @RequestMapping("/api/outbox")
 public class OutboxAdminController {
     private final Outbox outbox;

@@ -57,8 +57,8 @@ public class OutboxRepository {
     }
 
     /** Permanent failure: increment attempts and schedule retry. */
-    public void markRetry(UUID id, UUID claimToken, OffsetDateTime nextAttemptAt) {
-        jdbc.update("UPDATE outbox_events SET status='PENDING', attempts=attempts+1, next_attempt_at=?, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", nextAttemptAt, id, claimToken);
+    public int markRetry(UUID id, UUID claimToken, OffsetDateTime nextAttemptAt) {
+        return jdbc.update("UPDATE outbox_events SET status='PENDING', attempts=attempts+1, next_attempt_at=?, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", nextAttemptAt, id, claimToken);
     }
 
     /**
@@ -69,8 +69,8 @@ public class OutboxRepository {
         jdbc.update("UPDATE outbox_events SET status='PENDING', next_attempt_at=?, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", nextAttemptAt, id, claimToken);
     }
 
-    public void markDead(UUID id, UUID claimToken) {
-        jdbc.update("UPDATE outbox_events SET status='DEAD', attempts=attempts+1, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", id, claimToken);
+    public int markDead(UUID id, UUID claimToken) {
+        return jdbc.update("UPDATE outbox_events SET status='DEAD', attempts=attempts+1, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", id, claimToken);
     }
 
     /** Requeue a DEAD event for another publish cycle. Returns 1 if replayed, 0 if not found/not DEAD. */
@@ -107,11 +107,11 @@ public class OutboxRepository {
         return jdbc.update("DELETE FROM outbox_events WHERE status='SENT' AND sent_at < ?", cutoff);
     }
 
-    /** Age in seconds of oldest PENDING event, 0 if none. */
+    /** Age in seconds of oldest PENDING or PROCESSING event, 0 if none. */
     public double oldestPendingAgeSeconds() {
         Double d = jdbc.queryForObject("""
                 SELECT COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at))), 0)::float8
-                FROM outbox_events WHERE status='PENDING'
+                FROM outbox_events WHERE status IN ('PENDING','PROCESSING')
                 """, Double.class);
         return d == null ? 0 : d;
     }

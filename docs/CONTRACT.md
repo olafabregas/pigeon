@@ -21,7 +21,10 @@ User config overrides.
 
 Publish outcomes: **CONFIRMED** → SENT; **TRANSIENT** (broker down/timeout) → soft retry, attempts unchanged; **PERMANENT** (nack/unroutable) → attempts++ → DEAD after `max-attempts`.
 
-Replay: `Outbox.replayDead(id)` / `replayAllDead()`. Demo HTTP: `POST /api/outbox/dead/{id}/replay`, `POST /api/outbox/dead/replay-all`.
+Replay methods: `Outbox.replayDead(id)` / `replayAllDead()`. The HTTP replay
+endpoints are demo-only: `POST /api/outbox/dead/{id}/replay`,
+`POST /api/outbox/dead/replay-all`. Production apps should implement their own
+administrative access policy.
 
 ## RabbitMQ defaults
 - Exchange `pigeon.events` (topic)
