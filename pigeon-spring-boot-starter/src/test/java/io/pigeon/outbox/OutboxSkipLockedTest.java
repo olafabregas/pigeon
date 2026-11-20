@@ -212,11 +212,14 @@ class OutboxSkipLockedTest {
     void staleClaimCannotBeMarkedSentByItsOldOwner() {
         UUID id = new OutboxRepository(jdbc).insert("order", "claim", "order.created", "{}");
         UUID oldOwner = UUID.randomUUID();
-        new OutboxRepository(jdbc).claimBatch(1, oldOwner, 60_000);
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        assertThat(repo.claimBatch(1, oldOwner, 60_000)).hasSize(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("PROCESSING");
 
         jdbc.update("UPDATE outbox_events SET claim_token=? WHERE id=?", UUID.randomUUID(), id);
 
-        assertThat(new OutboxRepository(jdbc).markSent(id, oldOwner)).isZero();
+        assertThat(repo.markSent(id, oldOwner)).isZero();
         assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
                 .isEqualTo("PROCESSING");
     }
