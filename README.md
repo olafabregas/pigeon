@@ -1,5 +1,7 @@
 # Pigeon
 
+![CI](https://github.com/olafabregas/pigeon/actions/workflows/ci.yml/badge.svg)
+
 **Transactional outbox for Spring Boot + PostgreSQL + RabbitMQ.**
 
 Add the starter, write one line in your database transaction, and Pigeon publishes to RabbitMQ with confirms, retries, and a dead-letter queue — even if the broker is down when you commit.
