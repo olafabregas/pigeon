@@ -12,11 +12,13 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import javax.sql.DataSource;
 
 class OutboxAutoConfigurationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(OutboxAutoConfiguration.class))
             .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
+            .withBean(DataSource.class, () -> mock(DataSource.class))
             .withBean(RabbitTemplate.class, () -> mock(RabbitTemplate.class))
             .withBean(PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class));
 
