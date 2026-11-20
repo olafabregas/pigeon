@@ -11,7 +11,14 @@ if (-not (Test-Path (Join-Path $dir "$Script.js"))) {
     Write-Error "Unknown script '$Script'. Use smoke or spike."
 }
 
-$baseUrl = if ($env:BASE_URL) { $env:BASE_URL } else { 'http://host.docker.internal:8081' }
+$baseUrl = $env:BASE_URL
+if (-not $baseUrl) {
+    $port = docker compose port core 8081
+    if (-not $port) {
+        throw 'BASE_URL is required unless the Compose core service is running.'
+    }
+    $baseUrl = "http://host.docker.internal:$($port.Split(':')[-1])"
+}
 $envArgs = @('-e', "BASE_URL=$baseUrl")
 if ($env:PEAK_RPS) { $envArgs += @('-e', "PEAK_RPS=$($env:PEAK_RPS)") }
 if ($env:SLOW_MS)  { $envArgs += @('-e', "SLOW_MS=$($env:SLOW_MS)") }

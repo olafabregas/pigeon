@@ -25,9 +25,9 @@ scenario, then record the generated k6 summary and environment details here.
 ## Results
 
 | Metric | smoke | spike |
-|---|---|---|---|
-| Total requests | `<>` | `<>` | `<>` |
-| Achieved RPS | `<>` | `<>` | `<>` |
+|---|---|---|
+| Total requests | `<>` | `<>` |
+| Achieved RPS | `<>` | `<>` |
 | 201 count | `<>` | `<>` |
 | 5xx count | `<>` | `<>` |
 | p50 latency | `<>` | `<>` |

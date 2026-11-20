@@ -80,6 +80,7 @@ class OutboxSkipLockedTest {
     private static OutboxProperties props(int batch, int maxAttempts) {
         return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 1000, 5,
                 604_800_000, 3_600_000,
+                60_000,
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 
@@ -205,5 +206,18 @@ class OutboxSkipLockedTest {
                 .isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE id=?", Integer.class, current))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void staleClaimCannotBeMarkedSentByItsOldOwner() {
+        UUID id = new OutboxRepository(jdbc).insert("order", "claim", "order.created", "{}");
+        UUID oldOwner = UUID.randomUUID();
+        new OutboxRepository(jdbc).claimBatch(1, oldOwner, 60_000);
+
+        jdbc.update("UPDATE outbox_events SET claim_token=? WHERE id=?", UUID.randomUUID(), id);
+
+        assertThat(new OutboxRepository(jdbc).markSent(id, oldOwner)).isZero();
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("PROCESSING");
     }
 }

@@ -45,7 +45,7 @@ public class OutboxDispatcher {
     public int dispatchBatch() {
         UUID claimToken = UUID.randomUUID();
         List<OutboxEvent> batch = tx.execute(status -> {
-            List<OutboxEvent> claimed = repository.claimBatch(props.batchSize(), claimToken);
+            List<OutboxEvent> claimed = repository.claimBatch(props.batchSize(), claimToken, props.claimLeaseMs());
             return claimed;
         });
         if (batch == null || batch.isEmpty()) {
@@ -70,9 +70,11 @@ public class OutboxDispatcher {
                                PublishOutcome outcome, OffsetDateTime now) {
         switch (outcome) {
             case CONFIRMED -> {
-                repository.markSent(e.id(), claimToken);
-                latency.record(Duration.between(e.createdAt(), now));
-                count("sent");
+                int updated = repository.markSent(e.id(), claimToken);
+                if (updated > 0) {
+                    latency.record(Duration.between(e.createdAt(), now));
+                    count("sent");
+                }
             }
             case TRANSIENT -> {
                 repository.markSoftRetry(e.id(), claimToken,

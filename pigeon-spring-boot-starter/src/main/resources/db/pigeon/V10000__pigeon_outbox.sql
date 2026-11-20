@@ -14,3 +14,5 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events (next_attempt_at) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_outbox_claim_recovery ON outbox_events (status, claimed_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_sent_cleanup ON outbox_events (status, sent_at);

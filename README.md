@@ -57,6 +57,11 @@ pigeon:
 
 Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: true`, and `template.mandatory: true` when you have not set them. Explicit values in your `application.yml` always win.
 
+> **Existing demo databases:** the new Pigeon migration location does not
+> migrate historical `flyway_schema_history` state from the old starter `V1`.
+> For a throwaway demo database, run `docker compose down -v` before starting
+> the updated stack.
+
 The starter runs its schema migration from `classpath:db/pigeon` using
 Pigeon-reserved versions, so it does not compete with an application's
 `classpath:db/migration/V1__...` migration. Set

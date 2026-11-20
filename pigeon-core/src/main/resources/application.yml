@@ -51,5 +51,6 @@ pigeon:
     broker-down-backoff-ms: ${OUTBOX_BROKER_DOWN_BACKOFF_MS:5000}
     sent-retention-ms: ${OUTBOX_SENT_RETENTION_MS:604800000}
     sent-cleanup-interval-ms: ${OUTBOX_SENT_CLEANUP_INTERVAL_MS:3600000}
+    claim-lease-ms: ${OUTBOX_CLAIM_LEASE_MS:60000}
   consumer:
     enabled: ${CONSUMER_ENABLED:true}

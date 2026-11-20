@@ -23,13 +23,14 @@ public class OutboxRepository {
     }
 
     /** Claims rows and releases the row locks when the surrounding transaction commits. */
-    public List<OutboxEvent> claimBatch(int limit, UUID claimToken) {
+    public List<OutboxEvent> claimBatch(int limit, UUID claimToken, long claimLeaseMs) {
         return jdbc.query("""
                 WITH claimed AS (
                     SELECT id
                     FROM outbox_events
                     WHERE (status = 'PENDING'
-                           OR (status = 'PROCESSING' AND claimed_at < now() - interval '1 minute'))
+                           OR (status = 'PROCESSING'
+                               AND claimed_at < now() - (? * interval '1 millisecond')))
                       AND next_attempt_at <= now()
                     ORDER BY next_attempt_at, created_at
                     LIMIT ?
@@ -48,11 +49,11 @@ public class OutboxRepository {
                 rs.getString("event_type"),
                 rs.getString("payload"),
                 rs.getInt("attempts"),
-                rs.getObject("created_at", OffsetDateTime.class)), limit, claimToken);
+                rs.getObject("created_at", OffsetDateTime.class)), claimLeaseMs, limit, claimToken);
     }
 
-    public void markSent(UUID id, UUID claimToken) {
-        jdbc.update("UPDATE outbox_events SET status='SENT', attempts=attempts+1, sent_at=now(), claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", id, claimToken);
+    public int markSent(UUID id, UUID claimToken) {
+        return jdbc.update("UPDATE outbox_events SET status='SENT', attempts=attempts+1, sent_at=now(), claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", id, claimToken);
     }
 
     /** Permanent failure: increment attempts and schedule retry. */
@@ -92,6 +93,13 @@ public class OutboxRepository {
 
     public long countByStatus(String status) {
         Long n = jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE status=?", Long.class, status);
+        return n == null ? 0 : n;
+    }
+
+    public long countPending() {
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE status IN ('PENDING','PROCESSING')",
+                Long.class);
         return n == null ? 0 : n;
     }
 

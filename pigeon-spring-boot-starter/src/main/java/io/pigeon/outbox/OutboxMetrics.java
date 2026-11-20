@@ -7,8 +7,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 public final class OutboxMetrics {
 
     public OutboxMetrics(OutboxRepository repo, MeterRegistry registry) {
-        Gauge.builder("pigeon.outbox.pending", () -> safe(() -> repo.countByStatus("PENDING")))
-                .description("PENDING outbox events")
+        Gauge.builder("pigeon.outbox.pending", () -> safe(() -> repo.countPending()))
+                .description("PENDING and PROCESSING outbox events")
                 .register(registry);
         Gauge.builder("pigeon.outbox.dead", () -> safe(() -> repo.countByStatus("DEAD")))
                 .description("DEAD outbox events")

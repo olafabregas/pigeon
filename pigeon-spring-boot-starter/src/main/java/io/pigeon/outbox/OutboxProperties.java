@@ -16,6 +16,7 @@ public record OutboxProperties(
         @DefaultValue("5000") long brokerDownBackoffMs,
         @DefaultValue("604800000") long sentRetentionMs,
         @DefaultValue("3600000") long sentCleanupIntervalMs,
+        @DefaultValue("60000") long claimLeaseMs,
         @DefaultValue("pigeon.events") String exchange,
         @DefaultValue("pigeon.dlx") String deadLetterExchange,
         @DefaultValue("pigeon.dlq") String deadLetterQueue) {
@@ -23,6 +24,7 @@ public record OutboxProperties(
     public static OutboxProperties defaults() {
         return new OutboxProperties(true, 50, 500, 8, 1000, 300_000, 5000, 5000,
                 604_800_000, 3_600_000,
+                60_000,
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 }

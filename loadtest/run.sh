@@ -9,6 +9,20 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 
 [ -f "$DIR/$SCRIPT.js" ] || { echo "Unknown script '$SCRIPT'. Use smoke or spike." >&2; exit 1; }
 
+if [ -z "${BASE_URL:-}" ]; then
+  CORE_PORT="$(docker compose port core 8081 2>/dev/null | tail -n 1)"
+  if [ -n "$CORE_PORT" ]; then
+    CORE_HOST="$(printf '%s' "$CORE_PORT" | sed 's/:.*//')"
+    if [ "$CORE_HOST" = "0.0.0.0" ] || [ "$CORE_HOST" = "::" ]; then
+      CORE_HOST="127.0.0.1"
+    fi
+    BASE_URL="http://${CORE_HOST}:$(printf '%s' "$CORE_PORT" | sed 's/.*://')"
+  else
+    echo "BASE_URL is required unless the Compose core service is running." >&2
+    exit 1
+  fi
+fi
+
 exec docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
   -v "$DIR:/scripts:ro" \
