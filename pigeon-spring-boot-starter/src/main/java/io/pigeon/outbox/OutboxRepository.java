@@ -65,8 +65,8 @@ public class OutboxRepository {
      * Transient failure (broker down): delay retry without incrementing attempts,
      * so outages do not push events to DEAD.
      */
-    public void markSoftRetry(UUID id, UUID claimToken, OffsetDateTime nextAttemptAt) {
-        jdbc.update("UPDATE outbox_events SET status='PENDING', next_attempt_at=?, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", nextAttemptAt, id, claimToken);
+    public int markSoftRetry(UUID id, UUID claimToken, OffsetDateTime nextAttemptAt) {
+        return jdbc.update("UPDATE outbox_events SET status='PENDING', next_attempt_at=?, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", nextAttemptAt, id, claimToken);
     }
 
     public int markDead(UUID id, UUID claimToken) {

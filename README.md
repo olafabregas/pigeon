@@ -60,6 +60,8 @@ spring:
 pigeon:
   outbox:
     enabled: true
+    scheduling:
+      enabled: true
     sent-retention-ms: 604800000
     claim-lease-ms: 60000
     flyway:
@@ -116,6 +118,9 @@ outbox.write("shipment", shipmentId, "shipment.updated", payload);
 - **Broker unavailable / confirm timeout** → event stays `PENDING` (soft retry). Attempts are **not** burned.
 - **Permanent failure** (nack, unroutable) → attempts increment → `DEAD` after `max-attempts`, plus DLQ.
 - **Replay DEAD:** `Outbox.replayDead(id)` / `Outbox.replayAllDead()` (demo HTTP below).
+
+The replay HTTP endpoints are demo-only, are not authenticated, and should
+not be exposed in production.
 
 The dispatcher claims rows in a short database transaction, releases the row
 locks before waiting for RabbitMQ confirms, and finalizes each event in its own

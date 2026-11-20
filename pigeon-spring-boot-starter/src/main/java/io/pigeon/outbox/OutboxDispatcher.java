@@ -77,9 +77,11 @@ public class OutboxDispatcher {
                 }
             }
             case TRANSIENT -> {
-                repository.markSoftRetry(e.id(), claimToken,
+                int updated = repository.markSoftRetry(e.id(), claimToken,
                         now.plus(Duration.ofMillis(props.brokerDownBackoffMs())));
-                count("deferred");
+                if (updated > 0) {
+                    count("deferred");
+                }
             }
             case PERMANENT -> handlePermanentFailure(e, claimToken, now);
         }

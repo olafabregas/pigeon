@@ -39,7 +39,9 @@ Delivery is **at least once**. A process crash after RabbitMQ confirms a
 message but before its row is marked `SENT` causes a republish. Consumers must
 deduplicate using the event `messageId` and make side effects idempotent.
 
-Pigeon migrations live under `classpath:db/pigeon` and use Pigeon-reserved
-versions, rather than competing with the application's default
-`classpath:db/migration` `V1`.
+Pigeon migrations are opt-in. Enable
+`pigeon.outbox.flyway.enabled=true` to run migrations from
+`classpath:db/pigeon` using Pigeon-reserved versions and the
+`pigeon_schema_history` table. This location and history table do not compete
+with the application's default `classpath:db/migration` `V1` migration.
 
