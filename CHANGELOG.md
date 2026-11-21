@@ -43,7 +43,7 @@ it to RabbitMQ.
   `messageId` and be idempotent.
 - **No ordering guarantee**, including per aggregate. Consumers that need
   ordering must enforce it.
-- **Supported stack only:** Java 21, Spring Boot 3, PostgreSQL, RabbitMQ.
+- **Supported stack only:** Java 21, Spring Boot 3 (built and tested against 3.5.16), PostgreSQL, RabbitMQ. Spring Boot 4 is not supported yet.
 - **Demo replay endpoints are unauthenticated** and must not be exposed in
   production.
 - No migration path from pre-release demo databases; recreate them.

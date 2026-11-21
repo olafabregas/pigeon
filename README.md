@@ -302,7 +302,7 @@ Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 
 ## Stack
 
-Java 21, Spring Boot 3, PostgreSQL, RabbitMQ. That is the supported surface for v1.
+Java 21, Spring Boot 3 (built and tested against 3.5.16), PostgreSQL, RabbitMQ. That is the supported surface for v1. Spring Boot 4 is not supported yet.
 
 ## License
 
