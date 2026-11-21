@@ -28,6 +28,7 @@ it to RabbitMQ.
   (`db/pigeon`) and history table (`pigeon_schema_history`).
 - **Runs by default, on its own threads:** the dispatcher and the SENT-row cleanup start with the application and stop with it, without enabling `@EnableScheduling` for the host app. Set `pigeon.outbox.scheduling.enabled=false` for write-only instances.
 - **Payload validation:** `Outbox.write(..., String)` checks that the text is valid JSON before writing and fails with a clear `IllegalArgumentException`, rather than a database error that aborts your transaction. The message does not echo the payload.
+- **Clean shutdown:** on stop, the dispatcher finishes the in-flight batch (waiting up to `confirm-timeout-ms` plus 5 s), then interrupts it. Events from a batch that ends early are handed back to `PENDING` immediately instead of waiting out `claim-lease-ms`.
 - **Failure reasons:** `outbox_events.last_error` records why the latest publish failed, and survives on `DEAD` rows.
 - **Jittered backoff:** retry delays are randomly shortened by up to `pigeon.outbox.backoff-jitter` (default `0.2`) so failed events do not retry in lockstep.
 - **Operational logging:** quiet by default; set `logging.level.io.pigeon=DEBUG` to see claims and sends. Retries, reclaimed leases, DEAD events and replays are always logged.

@@ -111,6 +111,40 @@ class OutboxSchedulerTest {
     }
 
     @Test
+    void stopWaitDefaultsToOneConfirmTimeoutPlusHeadroom() throws Exception {
+        java.lang.reflect.Field f = OutboxScheduler.class.getDeclaredField("stopWaitMs");
+        f.setAccessible(true);
+        OutboxScheduler s = new OutboxScheduler(mock(OutboxDispatcher.class), mock(OutboxCleanup.class), props(10, 50));
+
+        // props() uses confirmTimeoutMs = 5000
+        assertThat(f.getLong(s)).isEqualTo(5_000 + 5_000);
+    }
+
+    @Test
+    void stopInterruptsABatchThatOutlivesTheWait() {
+        java.util.concurrent.atomic.AtomicBoolean interrupted = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.CountDownLatch inFlight = new java.util.concurrent.CountDownLatch(1);
+        OutboxDispatcher dispatcher = mock(OutboxDispatcher.class);
+        when(dispatcher.dispatchBatch()).thenAnswer(i -> {
+            inFlight.countDown();
+            try {
+                Thread.sleep(60_000);
+            } catch (InterruptedException e) {
+                interrupted.set(true);
+            }
+            return 0;
+        });
+        scheduler = new OutboxScheduler(dispatcher, mock(OutboxCleanup.class), props(10, 50), 100);
+        scheduler.start();
+        await().atMost(Duration.ofSeconds(5)).until(() -> inFlight.getCount() == 0);
+
+        scheduler.stop();
+
+        await().atMost(Duration.ofSeconds(5)).untilTrue(interrupted);
+        assertThat(scheduler.isRunning()).isFalse();
+    }
+
+    @Test
     void runsSentCleanup() {
         OutboxCleanup cleanup = mock(OutboxCleanup.class);
         scheduler = new OutboxScheduler(mock(OutboxDispatcher.class), cleanup, props(10, 50));

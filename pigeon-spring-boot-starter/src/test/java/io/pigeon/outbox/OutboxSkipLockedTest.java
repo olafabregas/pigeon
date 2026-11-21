@@ -276,6 +276,93 @@ class OutboxSkipLockedTest {
     }
 
     @Test
+    void failureWhileFinalizingReleasesTheRestOfTheBatchImmediately() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository real = new OutboxRepository(jdbc);
+        for (int i = 0; i < 3; i++) {
+            real.insert("order", "rel" + i, "order.created", "{}");
+        }
+        java.util.concurrent.atomic.AtomicInteger sent = new java.util.concurrent.atomic.AtomicInteger();
+        OutboxRepository flaky = new OutboxRepository(jdbc) {
+            @Override
+            public int markSent(UUID id, UUID claimToken) {
+                if (sent.incrementAndGet() == 2) {
+                    throw new IllegalStateException("database blip");
+                }
+                return super.markSent(id, claimToken);
+            }
+        };
+        OutboxDispatcher d = new OutboxDispatcher(flaky, new RecordingPublisher(), new TransactionTemplate(tm),
+                new SimpleMeterRegistry(), props(10, 5));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(d::dispatchBatch)
+                .isInstanceOf(IllegalStateException.class);
+
+        // Nothing is left leased: one SENT, the other two straight back to PENDING with attempts untouched.
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE status='PROCESSING'", Integer.class))
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE status='SENT'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE status='PENDING' AND attempts=0 AND claim_token IS NULL",
+                Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void releasingAnAlreadyFinalizedBatchChangesNothing() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID id = repo.insert("order", "rel-noop", "order.created", "{}");
+        UUID token = UUID.randomUUID();
+        assertThat(repo.claimBatch(1, token, 60_000)).hasSize(1);
+        repo.markSent(id, token);
+
+        assertThat(repo.releaseClaim(token)).isZero();
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("SENT");
+    }
+
+    @Test
+    void stoppingWhileAPublishIsInFlightReleasesTheEventWithoutWaitingForTheLease() throws Exception {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "stop1", "order.created", "{}");
+        java.util.concurrent.CountDownLatch publishing = new java.util.concurrent.CountDownLatch(1);
+        OutboxPublisher blocking = new OutboxPublisher() {
+            public PublishBatchResult publish(List<OutboxEvent> events) {
+                publishing.countDown();
+                try {
+                    Thread.sleep(60_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                // Like the real publisher: an interrupted confirm wait is a transient failure.
+                return PublishBatchResult.all(events, PublishOutcome.TRANSIENT, "interrupted");
+            }
+
+            public void deadLetter(OutboxEvent event) {
+            }
+        };
+        OutboxScheduler scheduler = new OutboxScheduler(dispatcher(blocking, props(10, 5)),
+                org.mockito.Mockito.mock(OutboxCleanup.class), props(10, 5), 200);
+        scheduler.start();
+        assertThat(publishing.await(10, TimeUnit.SECONDS)).isTrue();
+
+        long started = System.nanoTime();
+        scheduler.stop();
+        long stopMs = (System.nanoTime() - started) / 1_000_000;
+
+        assertThat(stopMs).isLessThan(5_000);
+        assertThat(scheduler.isRunning()).isFalse();
+        // Leased for 60s, yet immediately claimable again: it was handed back, not left PROCESSING.
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject("SELECT claim_token FROM outbox_events WHERE id=?", UUID.class, id))
+                .isNull();
+        assertThat(jdbc.queryForObject("SELECT attempts FROM outbox_events WHERE id=?", Integer.class, id))
+                .isZero();
+    }
+
+    @Test
     void cleanupDeletesOnlyExpiredSentRows() {
         OutboxRepository repo = new OutboxRepository(jdbc);
         UUID expired = repo.insert("order", "expired", "order.created", "{}");

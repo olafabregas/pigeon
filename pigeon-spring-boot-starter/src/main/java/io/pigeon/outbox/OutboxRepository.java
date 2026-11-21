@@ -90,6 +90,14 @@ public class OutboxRepository {
         return jdbc.update("UPDATE outbox_events SET status='DEAD', attempts=attempts+1, last_error=?, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", error, id, claimToken);
     }
 
+    /**
+     * Hands rows still leased under {@code claimToken} straight back to PENDING, without burning attempts.
+     * Rows already finalized have no claim token any more, so they are untouched.
+     */
+    public int releaseClaim(UUID claimToken) {
+        return jdbc.update("UPDATE outbox_events SET status='PENDING', claim_token=NULL, claimed_at=NULL WHERE status='PROCESSING' AND claim_token=?", claimToken);
+    }
+
     /** Requeue a DEAD event for another publish cycle. Returns 1 if replayed, 0 if not found/not DEAD. */
     public int replayDead(UUID id) {
         return jdbc.update("""

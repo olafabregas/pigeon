@@ -71,21 +71,19 @@ spring:
 pigeon:
   outbox:
     enabled: true
+    scheduling:
+      enabled: true
     sent-retention-ms: 604800000
     claim-lease-ms: 60000
-    backoff-jitter: 0.2
     flyway:
       enabled: true
       locations: classpath:db/pigeon
       table: pigeon_schema_history
 ```
 
-The dispatcher runs by default on Pigeon's own threads, so it does not turn on
-`@EnableScheduling` for the rest of your application. To run an instance that
-only writes events and leaves publishing to other instances, set
-`pigeon.outbox.scheduling.enabled: false`. That instance logs a notice at
-startup. Setting `pigeon.outbox.enabled: false` turns Pigeon's dispatcher off
-entirely.
+> **Required:** `pigeon.outbox.scheduling.enabled: true`. It has no default, and
+> without it the dispatcher never starts, so events are written to the outbox
+> but never published.
 
 Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: true`, and `template.mandatory: true` when you have not set them. Explicit values in your `application.yml` always win.
 
@@ -98,9 +96,6 @@ The starter migration is opt-in. It runs separately from Spring Boot Flyway
 from `classpath:db/pigeon`, using `pigeon_schema_history`, so it does not
 compete with an application's `classpath:db/migration/V1__...` migration.
 Set `pigeon.outbox.flyway.enabled=false` to manage Pigeon SQL yourself.
-Retry delays are shortened by a random fraction of up to `backoff-jitter`
-(default `0.2`, set `0` to disable) so events that failed together do not retry
-at the same moment. The failure reason is stored in `outbox_events.last_error`.
 Confirmed `SENT` rows are retained for seven days by default and then purged
 hourly. Adjust `sent-retention-ms` or set it to `0` for immediate cleanup.
 
@@ -133,14 +128,6 @@ outbox.write("user", userId, "user.registered", payload);
 outbox.write("shipment", shipmentId, "shipment.updated", payload);
 ```
 
-`write` has two overloads. Pass an **object** (a `Map`, record or POJO) and Pigeon
-serializes it with Jackson. Pass a **`String`** and it is treated as ready-made
-JSON text and stored as-is, so it must already be valid JSON. Invalid JSON is
-rejected immediately with an `IllegalArgumentException` (the message never
-includes the payload), instead of a database error that aborts your transaction.
-To send a plain string as a JSON string, pass it typed as `Object` or quote it
-yourself. Calling `write` outside a transaction throws `IllegalStateException`.
-
 ### Broker down and DEAD events
 
 - **Broker unavailable / confirm timeout** → event stays `PENDING` (soft retry). Attempts are **not** burned.
@@ -169,8 +156,7 @@ logging:
 | Level | Message | Meaning |
 |---|---|---|
 | INFO | `pigeon outbox started: exchange=… batchSize=… pollIntervalMs=…` | Dispatcher is running |
-| INFO | `pigeon outbox dispatching is disabled (pigeon.outbox.scheduling.enabled=false) …` | This instance writes events but does not publish them |
-| INFO | `pigeon outbox stopped` | The dispatcher shut down with the application |
+| WARN | `pigeon outbox is NOT dispatching: set pigeon.outbox.scheduling.enabled=true` | Scheduling is off; nothing will be published |
 | DEBUG | `claimed N outbox event(s) token=…` | A batch was claimed |
 | DEBUG | `event ID sent type=… attempts=… latencyMs=…` | Broker confirmed the publish |
 | WARN | `event ID publish failed (attempt N/MAX), retrying in MS ms` | Permanent failure, backing off |
@@ -240,8 +226,7 @@ Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 - `Outbox.write(...)` in the same transaction as your domain write
 - Flyway migration for `outbox_events` under `db/pigeon`, isolated from app migrations
 - In-process poller with leased `SELECT ... FOR UPDATE SKIP LOCKED` claims
-- RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → jittered backoff → `DEAD` + DLQ
-- `last_error` on each row says why the latest publish failed, including on `DEAD` rows
+- RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → backoff → `DEAD` + DLQ
 - At-least-once delivery with an event `messageId`; consumers must be idempotent
 - Replay DEAD events via demo-only API / `Outbox.replay*`
 - Micrometer metrics: `pending`, `lag`, `dead`, dispatch latency, `dispatched{sent|deferred|failed|dead}`

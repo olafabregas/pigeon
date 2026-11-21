@@ -20,19 +20,28 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class OutboxScheduler implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(OutboxScheduler.class);
-    private static final long STOP_WAIT_SECONDS = 10;
+    /** Headroom on top of one confirm timeout for finalizing the in-flight batch. */
+    private static final long STOP_HEADROOM_MS = 5_000;
 
     private final OutboxDispatcher dispatcher;
     private final OutboxCleanup cleanup;
     private final OutboxProperties props;
+    private final long stopWaitMs;
 
     private volatile boolean running;
     private ScheduledExecutorService executor;
 
     OutboxScheduler(OutboxDispatcher dispatcher, OutboxCleanup cleanup, OutboxProperties props) {
+        // One confirm wait is the longest a healthy in-flight batch can block: after the first confirm
+        // timeout the publisher stops waiting for the rest of the batch.
+        this(dispatcher, cleanup, props, props.confirmTimeoutMs() + STOP_HEADROOM_MS);
+    }
+
+    OutboxScheduler(OutboxDispatcher dispatcher, OutboxCleanup cleanup, OutboxProperties props, long stopWaitMs) {
         this.dispatcher = dispatcher;
         this.cleanup = cleanup;
         this.props = props;
+        this.stopWaitMs = stopWaitMs;
     }
 
     @Override
@@ -58,9 +67,13 @@ public final class OutboxScheduler implements SmartLifecycle {
         running = false;
         executor.shutdown();
         try {
-            if (!executor.awaitTermination(STOP_WAIT_SECONDS, TimeUnit.SECONDS)) {
-                log.warn("pigeon outbox did not stop within {}s; interrupting", STOP_WAIT_SECONDS);
+            if (!executor.awaitTermination(stopWaitMs, TimeUnit.MILLISECONDS)) {
+                log.warn("pigeon outbox did not stop within {} ms; interrupting the in-flight batch", stopWaitMs);
                 executor.shutdownNow();
+                if (!executor.awaitTermination(stopWaitMs, TimeUnit.MILLISECONDS)) {
+                    log.warn("pigeon outbox thread is still busy after interrupt; "
+                            + "unfinished events become claimable when their lease expires");
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

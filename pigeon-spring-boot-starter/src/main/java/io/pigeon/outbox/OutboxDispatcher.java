@@ -54,20 +54,50 @@ public class OutboxDispatcher {
         if (claim.reclaimed() > 0) {
             log.warn("reclaimed {} expired PROCESSING event(s)", claim.reclaimed());
         }
-        PublishBatchResult result;
+        boolean completed = false;
         try {
-            result = publisher.publish(batch);
-        } catch (RuntimeException e) {
-            log.warn("publish batch failed (treating as transient): {}", e.toString());
-            result = PublishBatchResult.all(batch, PublishOutcome.TRANSIENT, "publish batch failed: " + e);
+            PublishBatchResult result;
+            try {
+                result = publisher.publish(batch);
+            } catch (RuntimeException e) {
+                log.warn("publish batch failed (treating as transient): {}", e.toString());
+                result = PublishBatchResult.all(batch, PublishOutcome.TRANSIENT, "publish batch failed: " + e);
+            }
+            OffsetDateTime now = OffsetDateTime.now();
+            for (OutboxEvent e : batch) {
+                PublishOutcome outcome = result.get(e.id());
+                String error = result.error(e.id());
+                tx.executeWithoutResult(status -> finalizeEvent(e, claimToken, outcome, error, now));
+            }
+            completed = true;
+            return batch.size();
+        } finally {
+            if (!completed) {
+                releaseUnfinished(claimToken);
+            }
         }
-        OffsetDateTime now = OffsetDateTime.now();
-        for (OutboxEvent e : batch) {
-            PublishOutcome outcome = result.get(e.id());
-            String error = result.error(e.id());
-            tx.executeWithoutResult(status -> finalizeEvent(e, claimToken, outcome, error, now));
+    }
+
+    /**
+     * A batch that ends early (interrupted on shutdown, or the database failed while finalizing) would
+     * otherwise leave its remaining rows PROCESSING until the lease expires. Hand them back right away.
+     * Best effort: if this fails too, the lease still makes the rows claimable later.
+     */
+    private void releaseUnfinished(UUID claimToken) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            Integer released = tx.execute(status -> repository.releaseClaim(claimToken));
+            if (released != null && released > 0) {
+                log.warn("released {} claimed outbox event(s) back to PENDING after an unfinished batch", released);
+            }
+        } catch (RuntimeException ex) {
+            log.warn("could not release claimed outbox events; they become claimable when the lease expires: {}",
+                    ex.toString());
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
-        return batch.size();
     }
 
     private void finalizeEvent(OutboxEvent e, java.util.UUID claimToken,
