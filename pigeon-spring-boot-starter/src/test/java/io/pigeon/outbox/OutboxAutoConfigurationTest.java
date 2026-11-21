@@ -80,6 +80,37 @@ class OutboxAutoConfigurationTest {
     }
 
     @Test
+    void healthIndicatorIsRegisteredByDefault() {
+        contextRunner.run(context -> assertThat(context).hasSingleBean(OutboxHealthIndicator.class)
+                .hasBean("pigeonOutboxHealthIndicator"));
+    }
+
+    @Test
+    void healthIndicatorCanBeDisabled() {
+        contextRunner.withPropertyValues("pigeon.outbox.health.enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean(OutboxHealthIndicator.class));
+    }
+
+    @Test
+    void healthIndicatorOnAWriteOnlyInstanceReportsUp() {
+        contextRunner.withPropertyValues("pigeon.outbox.scheduling.enabled=false")
+                .run(context -> assertThat(context.getBean(OutboxHealthIndicator.class).health().getStatus())
+                        .isEqualTo(org.springframework.boot.actuate.health.Status.UP));
+    }
+
+    @Test
+    void starterStillWorksWithoutActuatorOnTheClasspath() {
+        contextRunner
+                .withClassLoader(new org.springframework.boot.test.context.FilteredClassLoader(
+                        org.springframework.boot.actuate.health.HealthIndicator.class))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(Outbox.class);
+                    assertThat(context).doesNotHaveBean(OutboxHealthIndicator.class);
+                });
+    }
+
+    @Test
     void createsFallbackOnlyWhenNoRegistryExists() {
         contextRunner.run(context -> assertThat(context).hasBean("pigeonFallbackMeterRegistry"));
     }

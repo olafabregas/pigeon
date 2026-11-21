@@ -5,7 +5,7 @@
   <parent>
     <groupId>io.pigeon</groupId>
     <artifactId>pigeon-parent</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
   </parent>
   <artifactId>pigeon-spring-boot-starter</artifactId>
   <name>Pigeon Spring Boot Starter</name>

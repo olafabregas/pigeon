@@ -43,6 +43,7 @@ class OutboxCleanupTest {
         return new OutboxProperties(true, 50, 500, 8, 1000, 300_000, 0.0, 5000, 5000,
                 sentRetentionMs, deadRetentionMs, 3_600_000, 60_000,
                 new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
+                new OutboxProperties.Health(true, 300),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 

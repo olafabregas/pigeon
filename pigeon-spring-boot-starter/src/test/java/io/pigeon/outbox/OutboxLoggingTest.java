@@ -80,6 +80,7 @@ class OutboxLoggingTest {
         OutboxProperties props = new OutboxProperties(true, 10, 100, maxAttempts, 1, 5, 0.0, 1000, 5,
                 604_800_000, -1, 3_600_000, 60_000,
                 new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
+                new OutboxProperties.Health(true, 300),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
         return new OutboxDispatcher(new OutboxRepository(jdbc), publisher, new TransactionTemplate(tm),
                 new SimpleMeterRegistry(), props);

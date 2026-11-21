@@ -82,6 +82,7 @@ class OutboxSkipLockedTest {
                 604_800_000, -1, 3_600_000,
                 60_000,
                 new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
+                new OutboxProperties.Health(true, 300),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 
@@ -437,6 +438,26 @@ class OutboxSkipLockedTest {
                 .isTrue();
         assertThat(old.queryForObject("SELECT count(*) FROM outbox_events WHERE status<>'DEAD' AND dead_at IS NOT NULL",
                 Integer.class)).isZero();
+    }
+
+    @Test
+    void healthIsDownWhenARealEventHasBeenWaitingTooLong() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID stuck = repo.insert("order", "health1", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET created_at = now() - interval '1 hour' WHERE id=?", stuck);
+        OutboxScheduler running = org.mockito.Mockito.mock(OutboxScheduler.class);
+        org.mockito.Mockito.when(running.isRunning()).thenReturn(true);
+        OutboxHealthIndicator indicator = new OutboxHealthIndicator(repo, props(10, 5), running);
+
+        org.springframework.boot.actuate.health.Health health = indicator.health();
+
+        assertThat(health.getStatus()).isEqualTo(org.springframework.boot.actuate.health.Status.DOWN);
+        assertThat(health.getDetails()).containsEntry("pending", 1L);
+        assertThat((Long) health.getDetails().get("lagSeconds")).isGreaterThanOrEqualTo(3600L);
+
+        jdbc.update("UPDATE outbox_events SET status='SENT', sent_at=now() WHERE id=?", stuck);
+        assertThat(indicator.health().getStatus()).isEqualTo(org.springframework.boot.actuate.health.Status.UP);
     }
 
     @Test
