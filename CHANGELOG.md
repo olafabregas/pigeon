@@ -24,8 +24,11 @@ it to RabbitMQ.
 - **Multi-replica safe:** `SELECT ... FOR UPDATE SKIP LOCKED` with leased
   claims lets replicas take disjoint batches. A crashed claimer's rows become
   claimable again after `pigeon.outbox.claim-lease-ms`.
-- **Isolated migrations:** the opt-in Flyway migration uses its own location
+- **Isolated migrations:** the opt-in Flyway migrations (`V10000`, `V10001`) use their own location
   (`db/pigeon`) and history table (`pigeon_schema_history`).
+- **Failure reasons:** `outbox_events.last_error` records why the latest publish failed, and survives on `DEAD` rows.
+- **Jittered backoff:** retry delays are randomly shortened by up to `pigeon.outbox.backoff-jitter` (default `0.2`) so failed events do not retry in lockstep.
+- **Operational logging:** quiet by default; set `logging.level.io.pigeon=DEBUG` to see claims and sends. Retries, reclaimed leases, DEAD events and replays are always logged.
 - **Metrics:** Micrometer gauges and timers for pending, lag, dead, dispatch
   latency and dispatch outcomes.
 

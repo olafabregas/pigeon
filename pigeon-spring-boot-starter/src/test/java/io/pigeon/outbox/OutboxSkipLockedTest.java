@@ -78,7 +78,7 @@ class OutboxSkipLockedTest {
     }
 
     private static OutboxProperties props(int batch, int maxAttempts) {
-        return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 1000, 5,
+        return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 0.0, 1000, 5,
                 604_800_000, 3_600_000,
                 60_000,
                 new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
@@ -192,6 +192,87 @@ class OutboxSkipLockedTest {
                 .isEqualTo("PENDING");
         assertThat(jdbc.queryForObject("SELECT attempts FROM outbox_events WHERE id=?", Integer.class, id))
                 .isEqualTo(0);
+    }
+
+    private static OutboxPublisher failingWith(PublishOutcome outcome, String error) {
+        return new OutboxPublisher() {
+            public PublishBatchResult publish(List<OutboxEvent> events) {
+                return PublishBatchResult.all(events, outcome, error);
+            }
+
+            public void deadLetter(OutboxEvent event) {
+            }
+        };
+    }
+
+    private static String lastError(UUID id) {
+        return jdbc.queryForObject("SELECT last_error FROM outbox_events WHERE id=?", String.class, id);
+    }
+
+    @Test
+    void permanentFailureRecordsLastErrorAndKeepsEventPending() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "le1", "order.created", "{}");
+
+        dispatcher(failingWith(PublishOutcome.PERMANENT, "broker nacked the publish"), props(10, 3)).dispatchBatch();
+
+        assertThat(lastError(id)).isEqualTo("broker nacked the publish");
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("PENDING");
+    }
+
+    @Test
+    void transientFailureRecordsLastErrorWithoutBurningAttempts() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "le2", "order.created", "{}");
+
+        dispatcher(failingWith(PublishOutcome.TRANSIENT, "broker unreachable"), props(10, 3)).dispatchBatch();
+
+        assertThat(lastError(id)).isEqualTo("broker unreachable");
+        assertThat(jdbc.queryForObject("SELECT attempts FROM outbox_events WHERE id=?", Integer.class, id))
+                .isEqualTo(0);
+    }
+
+    @Test
+    void deadEventExplainsWhyAndErrorSurvivesReplayUntilDelivered() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID id = repo.insert("order", "le3", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET attempts=2 WHERE id=?", id);
+
+        dispatcher(failingWith(PublishOutcome.PERMANENT, "unroutable: NO_ROUTE"), props(10, 3)).dispatchBatch();
+
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("DEAD");
+        assertThat(lastError(id)).isEqualTo("unroutable: NO_ROUTE");
+
+        new Outbox(repo, new com.fasterxml.jackson.databind.ObjectMapper()).replayDead(id);
+        assertThat(lastError(id)).isEqualTo("unroutable: NO_ROUTE");
+
+        dispatcher(new RecordingPublisher(), props(10, 3)).dispatchBatch();
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("SENT");
+        assertThat(lastError(id)).isNull();
+    }
+
+    @Test
+    void missingFailureReasonFallsBackToOutcomeName() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "le4", "order.created", "{}");
+
+        dispatcher(failingWith(PublishOutcome.PERMANENT, null), props(10, 3)).dispatchBatch();
+
+        assertThat(lastError(id)).isEqualTo("publish failed (PERMANENT)");
+    }
+
+    @Test
+    void overlongFailureReasonIsTruncated() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "le5", "order.created", "{}");
+
+        dispatcher(failingWith(PublishOutcome.PERMANENT, "x".repeat(5000)), props(10, 3)).dispatchBatch();
+
+        assertThat(lastError(id)).hasSize(1000);
     }
 
     @Test

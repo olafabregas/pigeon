@@ -11,6 +11,8 @@ public record OutboxProperties(
         @DefaultValue("8") int maxAttempts,
         @DefaultValue("1000") long baseBackoffMs,
         @DefaultValue("300000") long maxBackoffMs,
+        /** Fraction (0-1) by which each retry delay is randomly shortened, so retries do not synchronize. */
+        @DefaultValue("0.2") double backoffJitter,
         @DefaultValue("5000") long confirmTimeoutMs,
         /** Delay before retrying when the broker is down (does not increment attempts). */
         @DefaultValue("5000") long brokerDownBackoffMs,
@@ -30,7 +32,7 @@ public record OutboxProperties(
     }
 
     public static OutboxProperties defaults() {
-        return new OutboxProperties(true, 50, 500, 8, 1000, 300_000, 5000, 5000,
+        return new OutboxProperties(true, 50, 500, 8, 1000, 300_000, 0.2, 5000, 5000,
                 604_800_000, 3_600_000,
                 60_000,
                 new Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),

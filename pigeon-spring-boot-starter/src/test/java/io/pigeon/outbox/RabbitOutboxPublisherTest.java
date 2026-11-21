@@ -48,6 +48,9 @@ class RabbitOutboxPublisherTest {
         assertThat(result.get(events.get(1).id())).isEqualTo(PublishOutcome.PERMANENT);
         assertThat(result.get(events.get(2).id())).isEqualTo(PublishOutcome.CONFIRMED);
         assertThat(sends).hasValue(3);
+        assertThat(result.error(events.get(1).id())).contains("send failed").contains("permanent send failure");
+        assertThat(result.error(events.get(0).id())).isNull();
+        assertThat(result.error(events.get(2).id())).isNull();
     }
 
     @Test
@@ -75,6 +78,7 @@ class RabbitOutboxPublisherTest {
         assertThat(result.get(events.get(1).id())).isEqualTo(PublishOutcome.TRANSIENT);
         assertThat(result.get(events.get(2).id())).isEqualTo(PublishOutcome.CONFIRMED);
         assertThat(sends).hasValue(3);
+        assertThat(result.error(events.get(1).id())).contains("send failed").contains("connection reset");
     }
 
     @Test
@@ -105,6 +109,7 @@ class RabbitOutboxPublisherTest {
                 .publish(List.of(event));
 
         assertThat(result.get(event.id())).isEqualTo(PublishOutcome.PERMANENT);
+        assertThat(result.error(event.id())).contains("unroutable").contains("NO_ROUTE");
     }
 
     private static OutboxEvent event() {
