@@ -71,8 +71,6 @@ spring:
 pigeon:
   outbox:
     enabled: true
-    scheduling:
-      enabled: true
     sent-retention-ms: 604800000
     claim-lease-ms: 60000
     backoff-jitter: 0.2
@@ -82,9 +80,12 @@ pigeon:
       table: pigeon_schema_history
 ```
 
-> **Required:** `pigeon.outbox.scheduling.enabled: true`. It has no default, and
-> without it the dispatcher never starts, so events are written to the outbox
-> but never published.
+The dispatcher runs by default on Pigeon's own threads, so it does not turn on
+`@EnableScheduling` for the rest of your application. To run an instance that
+only writes events and leaves publishing to other instances, set
+`pigeon.outbox.scheduling.enabled: false`. That instance logs a notice at
+startup. Setting `pigeon.outbox.enabled: false` turns Pigeon's dispatcher off
+entirely.
 
 Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: true`, and `template.mandatory: true` when you have not set them. Explicit values in your `application.yml` always win.
 
@@ -160,7 +161,8 @@ logging:
 | Level | Message | Meaning |
 |---|---|---|
 | INFO | `pigeon outbox started: exchange=… batchSize=… pollIntervalMs=…` | Dispatcher is running |
-| WARN | `pigeon outbox is NOT dispatching: set pigeon.outbox.scheduling.enabled=true` | Scheduling is off; nothing will be published |
+| INFO | `pigeon outbox dispatching is disabled (pigeon.outbox.scheduling.enabled=false) …` | This instance writes events but does not publish them |
+| INFO | `pigeon outbox stopped` | The dispatcher shut down with the application |
 | DEBUG | `claimed N outbox event(s) token=…` | A batch was claimed |
 | DEBUG | `event ID sent type=… attempts=… latencyMs=…` | Broker confirmed the publish |
 | WARN | `event ID publish failed (attempt N/MAX), retrying in MS ms` | Permanent failure, backing off |

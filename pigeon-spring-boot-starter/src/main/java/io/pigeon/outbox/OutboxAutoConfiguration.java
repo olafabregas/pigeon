@@ -24,20 +24,11 @@ import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.annotation.EnableScheduling;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
-
-@Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = "pigeon.outbox.scheduling.enabled", havingValue = "true")
-@EnableScheduling
-class PigeonSchedulingConfiguration {
-}
 
 @AutoConfiguration(after = {
         DataSourceAutoConfiguration.class,
@@ -47,7 +38,6 @@ class PigeonSchedulingConfiguration {
 @ConditionalOnClass({DataSource.class, JdbcTemplate.class, RabbitTemplate.class})
 @ConditionalOnBean(DataSource.class)
 @EnableConfigurationProperties(OutboxProperties.class)
-@Import(PigeonSchedulingConfiguration.class)
 public class OutboxAutoConfiguration {
 
     @Bean
@@ -126,42 +116,32 @@ public class OutboxAutoConfiguration {
         return BindingBuilder.bind(pigeonDeadLetterQueue).to(pigeonDeadLetterExchange).with("dead.#");
     }
 
+    /**
+     * Runs the dispatcher. On by default; set {@code pigeon.outbox.scheduling.enabled=false} on instances
+     * that should only write events and leave publishing to other instances.
+     */
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnProperty(name = "pigeon.outbox.enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnProperty(name = {"pigeon.outbox.enabled", "pigeon.outbox.scheduling.enabled"},
+            havingValue = "true", matchIfMissing = true)
     @ConditionalOnBean(OutboxDispatcher.class)
-    OutboxScheduler outboxScheduler(OutboxDispatcher dispatcher, OutboxProperties props,
-                                    org.springframework.core.env.Environment environment) {
-        boolean schedulingEnabled = environment.getProperty("pigeon.outbox.scheduling.enabled", Boolean.class, false);
-        return new OutboxScheduler(dispatcher, props, schedulingEnabled);
+    OutboxScheduler outboxScheduler(OutboxDispatcher dispatcher, OutboxCleanup cleanup, OutboxProperties props) {
+        return new OutboxScheduler(dispatcher, cleanup, props);
     }
 
-    public static final class OutboxScheduler {
-        private static final Logger log = LoggerFactory.getLogger(OutboxScheduler.class);
-        private final OutboxDispatcher dispatcher;
-        private final OutboxProperties props;
-
-        OutboxScheduler(OutboxDispatcher dispatcher, OutboxProperties props, boolean schedulingEnabled) {
-            this.dispatcher = dispatcher;
-            this.props = props;
-            if (schedulingEnabled) {
-                log.info("pigeon outbox started: exchange={} batchSize={} pollIntervalMs={}",
-                        props.exchange(), props.batchSize(), props.pollIntervalMs());
-            } else {
-                log.warn("pigeon outbox is NOT dispatching: set pigeon.outbox.scheduling.enabled=true");
-            }
-        }
-
-        @Scheduled(fixedDelayString = "${pigeon.outbox.poll-interval-ms:500}")
-        public void tick() {
-            try {
-                while (dispatcher.dispatchBatch() >= props.batchSize()) {
-                    // keep draining full batches
-                }
-            } catch (Exception e) {
-                log.warn("outbox dispatch tick failed: {}", e.toString());
-            }
-        }
+    @Bean
+    @ConditionalOnProperty(name = "pigeon.outbox.scheduling.enabled", havingValue = "false")
+    SchedulingDisabledNotice pigeonSchedulingDisabledNotice() {
+        return new SchedulingDisabledNotice();
     }
 
+    /** Makes a deliberately write-only instance visible in the logs. */
+    static final class SchedulingDisabledNotice {
+        private static final Logger log = LoggerFactory.getLogger(SchedulingDisabledNotice.class);
+
+        SchedulingDisabledNotice() {
+            log.info("pigeon outbox dispatching is disabled (pigeon.outbox.scheduling.enabled=false); "
+                    + "this instance writes events but does not publish them");
+        }
+    }
 }

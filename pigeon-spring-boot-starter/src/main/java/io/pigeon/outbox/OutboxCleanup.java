@@ -2,7 +2,6 @@ package io.pigeon.outbox;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.OffsetDateTime;
 import java.time.Duration;
@@ -18,7 +17,6 @@ final class OutboxCleanup {
         this.props = props;
     }
 
-    @Scheduled(fixedDelayString = "${pigeon.outbox.sent-cleanup-interval-ms:3600000}")
     void purgeSent() {
         int deleted = repository.deleteSentBefore(
                 OffsetDateTime.now().minus(Duration.ofMillis(props.sentRetentionMs())));

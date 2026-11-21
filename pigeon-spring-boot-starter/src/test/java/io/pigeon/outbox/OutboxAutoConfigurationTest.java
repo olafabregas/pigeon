@@ -33,6 +33,53 @@ class OutboxAutoConfigurationTest {
     }
 
     @Test
+    void dispatcherRunsByDefaultWithoutAnySchedulingProperty() {
+        contextRunner.run(context -> {
+            assertThat(context).hasSingleBean(OutboxScheduler.class);
+            assertThat(context.getBean(OutboxScheduler.class).isRunning()).isTrue();
+            assertThat(context).doesNotHaveBean(OutboxAutoConfiguration.SchedulingDisabledNotice.class);
+        });
+    }
+
+    @Test
+    void legacyExplicitTrueStillWorks() {
+        contextRunner.withPropertyValues("pigeon.outbox.scheduling.enabled=true")
+                .run(context -> assertThat(context).hasSingleBean(OutboxScheduler.class));
+    }
+
+    @Test
+    void schedulingCanBeDisabledForWriteOnlyInstances() {
+        contextRunner.withPropertyValues("pigeon.outbox.scheduling.enabled=false")
+                .run(context -> {
+                    assertThat(context).doesNotHaveBean(OutboxScheduler.class);
+                    assertThat(context).hasSingleBean(OutboxAutoConfiguration.SchedulingDisabledNotice.class);
+                    assertThat(context).hasSingleBean(Outbox.class);
+                });
+    }
+
+    @Test
+    void masterSwitchDisablesTheDispatcher() {
+        contextRunner.withPropertyValues("pigeon.outbox.enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean(OutboxScheduler.class));
+    }
+
+    @Test
+    void doesNotEnableSpringSchedulingForTheHostApplication() {
+        contextRunner.run(context -> assertThat(context)
+                .doesNotHaveBean("org.springframework.context.annotation.internalScheduledAnnotationProcessor"));
+    }
+
+    @Test
+    void stoppingTheContextStopsTheDispatcher() {
+        contextRunner.run(context -> {
+            OutboxScheduler scheduler = context.getBean(OutboxScheduler.class);
+            assertThat(scheduler.isRunning()).isTrue();
+            context.close();
+            assertThat(scheduler.isRunning()).isFalse();
+        });
+    }
+
+    @Test
     void createsFallbackOnlyWhenNoRegistryExists() {
         contextRunner.run(context -> assertThat(context).hasBean("pigeonFallbackMeterRegistry"));
     }

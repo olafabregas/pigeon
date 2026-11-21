@@ -189,18 +189,17 @@ class OutboxLoggingTest {
     }
 
     @Test
-    void schedulerLogsStartupWhenSchedulingIsEnabled() {
-        new OutboxAutoConfiguration.OutboxScheduler(null, OutboxProperties.defaults(), true);
+    void schedulerLogsStartupAndShutdown() {
+        OutboxScheduler scheduler = new OutboxScheduler(
+                org.mockito.Mockito.mock(OutboxDispatcher.class),
+                org.mockito.Mockito.mock(OutboxCleanup.class),
+                OutboxProperties.defaults());
+
+        scheduler.start();
+        scheduler.stop();
 
         assertThat(hasLog(Level.INFO,
                 "pigeon outbox started: exchange=pigeon.events batchSize=50 pollIntervalMs=500")).isTrue();
-    }
-
-    @Test
-    void schedulerWarnsWhenSchedulingIsDisabled() {
-        new OutboxAutoConfiguration.OutboxScheduler(null, OutboxProperties.defaults(), false);
-
-        assertThat(hasLog(Level.WARN, "pigeon.outbox.scheduling.enabled=true")).isTrue();
-        assertThat(hasLog(Level.INFO, "started")).isFalse();
+        assertThat(hasLog(Level.INFO, "pigeon outbox stopped")).isTrue();
     }
 }
