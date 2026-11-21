@@ -25,9 +25,17 @@ public record OutboxProperties(
         @DefaultValue("3600000") long sentCleanupIntervalMs,
         @DefaultValue("60000") long claimLeaseMs,
         @DefaultValue Flyway flyway,
+        @DefaultValue Health health,
         @DefaultValue("pigeon.events") String exchange,
         @DefaultValue("pigeon.dlx") String deadLetterExchange,
         @DefaultValue("pigeon.dlq") String deadLetterQueue) {
+
+    /** Binds {@code pigeon.outbox.health.*}: the Actuator health indicator. */
+    public record Health(
+            @DefaultValue("true") boolean enabled,
+            /** Report DOWN when the oldest undelivered event is older than this. {@code 0} disables the check. */
+            @DefaultValue("300") long maxLagSeconds) {
+    }
 
     /** Binds {@code pigeon.outbox.flyway.*}. */
     public record Flyway(
@@ -41,6 +49,7 @@ public record OutboxProperties(
                 604_800_000, -1, 3_600_000,
                 60_000,
                 new Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
+                new Health(true, 300),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 }

@@ -33,6 +33,7 @@ it to RabbitMQ.
 - **Failure reasons:** `outbox_events.last_error` records why the latest publish failed, and survives on `DEAD` rows.
 - **Jittered backoff:** retry delays are randomly shortened by up to `pigeon.outbox.backoff-jitter` (default `0.2`) so failed events do not retry in lockstep.
 - **Operational logging:** quiet by default; set `logging.level.io.pigeon=DEBUG` to see claims and sends. Retries, reclaimed leases, DEAD events and replays are always logged.
+- **Health indicator:** an optional Actuator `pigeonOutbox` health entry that reports `DOWN` when the dispatcher is stopped or the oldest undelivered event is older than `pigeon.outbox.health.max-lag-seconds` (default 300). Dead events are reported but do not fail it; write-only instances are always `UP`.
 - **Metrics:** Micrometer gauges and timers for pending, lag, dead, dispatch
   latency and dispatch outcomes.
 

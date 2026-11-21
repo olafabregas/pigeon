@@ -189,6 +189,8 @@ All settings live under `pigeon.outbox`. Every one is optional.
 | `exchange` | `pigeon.events` | Topic exchange events are published to; the routing key is the `eventType` |
 | `dead-letter-exchange` | `pigeon.dlx` | Exchange for `DEAD` events |
 | `dead-letter-queue` | `pigeon.dlq` | Queue bound to the dead-letter exchange with `dead.#` |
+| `health.enabled` | `true` | Register the Actuator health indicator (when Actuator is present) |
+| `health.max-lag-seconds` | `300` | Report `DOWN` when the oldest undelivered event is older than this; `0` disables the check |
 | `flyway.enabled` | `false` | Run Pigeon's own migration (opt-in) |
 | `flyway.locations` | `classpath:db/pigeon` | Where Pigeon's migrations live |
 | `flyway.table` | `pigeon_schema_history` | Flyway history table, separate from your application's |
@@ -205,6 +207,33 @@ Registered with Micrometer, so they appear in Actuator and Prometheus
 | `pigeon.outbox.lag.seconds` | gauge | Age of the oldest `PENDING` or `PROCESSING` event |
 | `pigeon.outbox.dispatch.latency` | timer | Time from event creation to confirmed publish |
 | `pigeon.outbox.dispatched` | counter | Dispatch outcomes, tagged `result` = `sent`, `deferred`, `failed` or `dead` |
+
+## Health
+
+With Spring Boot Actuator on the classpath, Pigeon adds a `pigeonOutbox` entry to
+`/actuator/health` (turn on `management.endpoint.health.show-details` to see the
+details). It reports `DOWN` when:
+
+- the dispatcher is not running, or
+- the oldest undelivered event is older than `health.max-lag-seconds` (default 300).
+
+```json
+"pigeonOutbox": {
+  "status": "UP",
+  "details": { "dispatching": "running", "pending": 3, "dead": 0, "lagSeconds": 2, "maxLagSeconds": 300 }
+}
+```
+
+`DEAD` events are reported but never fail the check: they need your attention,
+but the service itself is working. An instance with
+`scheduling.enabled: false` always reports `UP`, because another instance owns
+publishing. If you raise `max-attempts` or `max-backoff-ms` a lot, raise
+`max-lag-seconds` too, since a single failing event can legitimately stay queued
+that long.
+
+This indicator is not part of the Kubernetes liveness or readiness groups unless
+you add it. Keep it out of liveness: a stuck backlog usually means the broker is
+down, and restarting your pods will not fix that.
 
 ## Logging
 

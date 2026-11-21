@@ -135,6 +135,22 @@ public class OutboxAutoConfiguration {
         return new SchedulingDisabledNotice();
     }
 
+    /**
+     * Only loaded when Spring Boot Actuator is on the classpath, so the starter still works without it.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "org.springframework.boot.actuate.health.HealthIndicator")
+    @ConditionalOnProperty(name = "pigeon.outbox.health.enabled", havingValue = "true", matchIfMissing = true)
+    static class PigeonHealthConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean(name = "pigeonOutboxHealthIndicator")
+        OutboxHealthIndicator pigeonOutboxHealthIndicator(OutboxRepository repository, OutboxProperties props,
+                                                          ObjectProvider<OutboxScheduler> scheduler) {
+            return new OutboxHealthIndicator(repository, props, scheduler.getIfAvailable());
+        }
+    }
+
     /** Makes a deliberately write-only instance visible in the logs. */
     static final class SchedulingDisabledNotice {
         private static final Logger log = LoggerFactory.getLogger(SchedulingDisabledNotice.class);
