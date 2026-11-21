@@ -79,7 +79,7 @@ class OutboxSkipLockedTest {
 
     private static OutboxProperties props(int batch, int maxAttempts) {
         return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 0.0, 1000, 5,
-                604_800_000, 3_600_000,
+                604_800_000, -1, 3_600_000,
                 60_000,
                 new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
@@ -360,6 +360,83 @@ class OutboxSkipLockedTest {
                 .isNull();
         assertThat(jdbc.queryForObject("SELECT attempts FROM outbox_events WHERE id=?", Integer.class, id))
                 .isZero();
+    }
+
+    private static OutboxPublisher alwaysPermanentFailure() {
+        return failingWith(PublishOutcome.PERMANENT, "nack");
+    }
+
+    @Test
+    void becomingDeadStampsDeadAt() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "dd1", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET attempts=2 WHERE id=?", id);
+
+        dispatcher(alwaysPermanentFailure(), props(10, 3)).dispatchBatch();
+
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("DEAD");
+        assertThat(jdbc.queryForObject("SELECT dead_at IS NOT NULL FROM outbox_events WHERE id=?", Boolean.class, id))
+                .isTrue();
+    }
+
+    @Test
+    void replayClearsDeadAtSoARedeadedEventStartsItsRetentionAgain() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID one = repo.insert("order", "dd2", "order.created", "{}");
+        UUID two = repo.insert("order", "dd3", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET status='DEAD', dead_at=now() - interval '30 days'");
+
+        repo.replayDead(one);
+        assertThat(jdbc.queryForObject("SELECT dead_at FROM outbox_events WHERE id=?", Object.class, one)).isNull();
+        assertThat(jdbc.queryForObject("SELECT dead_at FROM outbox_events WHERE id=?", Object.class, two)).isNotNull();
+
+        repo.replayAllDead();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE dead_at IS NOT NULL", Integer.class))
+                .isZero();
+    }
+
+    @Test
+    void deleteDeadBeforeRemovesOnlyDeadRowsThatDiedBeforeTheCutoff() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID oldDead = repo.insert("order", "old-dead", "order.created", "{}");
+        UUID recentDead = repo.insert("order", "recent-dead", "order.created", "{}");
+        UUID oldPending = repo.insert("order", "old-pending", "order.created", "{}");
+        UUID oldSent = repo.insert("order", "old-sent", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET status='DEAD', dead_at=now() - interval '10 days' WHERE id=?", oldDead);
+        jdbc.update("UPDATE outbox_events SET status='DEAD', dead_at=now() - interval '1 hour' WHERE id=?", recentDead);
+        jdbc.update("UPDATE outbox_events SET created_at=now() - interval '30 days' WHERE id=?", oldPending);
+        jdbc.update("UPDATE outbox_events SET status='SENT', sent_at=now() - interval '30 days' WHERE id=?", oldSent);
+
+        int deleted = repo.deleteDeadBefore(java.time.OffsetDateTime.now().minusDays(7));
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(jdbc.queryForList("SELECT id FROM outbox_events", UUID.class))
+                .containsExactlyInAnyOrder(recentDead, oldPending, oldSent);
+    }
+
+    @Test
+    void deadAtMigrationBackfillsExistingDeadRowsOnly() {
+        jdbc.execute("DROP DATABASE IF EXISTS backfill_test");
+        jdbc.execute("CREATE DATABASE backfill_test");
+        String url = pg.getJdbcUrl().replace("/" + pg.getDatabaseName(), "/backfill_test");
+        Flyway.configure().dataSource(url, pg.getUsername(), pg.getPassword())
+                .locations("classpath:db/pigeon").target("10001").load().migrate();
+        JdbcTemplate old = new JdbcTemplate(new DriverManagerDataSource(url, pg.getUsername(), pg.getPassword()));
+        for (String status : List.of("DEAD", "PENDING", "SENT")) {
+            old.update("INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status) "
+                    + "VALUES (?, 'order', ?, 'order.created', '{}'::jsonb, ?)", UUID.randomUUID(), status, status);
+        }
+
+        Flyway.configure().dataSource(url, pg.getUsername(), pg.getPassword())
+                .locations("classpath:db/pigeon").load().migrate();
+
+        assertThat(old.queryForObject("SELECT dead_at IS NOT NULL FROM outbox_events WHERE status='DEAD'", Boolean.class))
+                .isTrue();
+        assertThat(old.queryForObject("SELECT count(*) FROM outbox_events WHERE status<>'DEAD' AND dead_at IS NOT NULL",
+                Integer.class)).isZero();
     }
 
     @Test

@@ -17,6 +17,11 @@ public record OutboxProperties(
         /** Delay before retrying when the broker is down (does not increment attempts). */
         @DefaultValue("5000") long brokerDownBackoffMs,
         @DefaultValue("604800000") long sentRetentionMs,
+        /**
+         * How long DEAD rows are kept, counted from when they died. Negative (the default) keeps them
+         * indefinitely, because DEAD events are undelivered and may still need a replay.
+         */
+        @DefaultValue("-1") long deadRetentionMs,
         @DefaultValue("3600000") long sentCleanupIntervalMs,
         @DefaultValue("60000") long claimLeaseMs,
         @DefaultValue Flyway flyway,
@@ -33,7 +38,7 @@ public record OutboxProperties(
 
     public static OutboxProperties defaults() {
         return new OutboxProperties(true, 50, 500, 8, 1000, 300_000, 0.2, 5000, 5000,
-                604_800_000, 3_600_000,
+                604_800_000, -1, 3_600_000,
                 60_000,
                 new Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");

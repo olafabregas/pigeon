@@ -100,7 +100,7 @@ public final class OutboxScheduler implements SmartLifecycle {
 
     private void purge() {
         try {
-            cleanup.purgeSent();
+            cleanup.purge();
         } catch (Exception e) {
             log.warn("outbox cleanup failed: {}", e.toString());
         }

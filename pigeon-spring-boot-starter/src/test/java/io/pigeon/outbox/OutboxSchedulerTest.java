@@ -26,7 +26,7 @@ class OutboxSchedulerTest {
 
     private static OutboxProperties props(long pollMs, int batchSize) {
         return new OutboxProperties(true, batchSize, pollMs, 8, 1000, 300_000, 0.0, 5000, 5000,
-                604_800_000, 3_600_000, 60_000,
+                604_800_000, -1, 3_600_000, 60_000,
                 new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
@@ -151,7 +151,7 @@ class OutboxSchedulerTest {
 
         scheduler.start();
 
-        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> verify(cleanup, atLeastOnce()).purgeSent());
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> verify(cleanup, atLeastOnce()).purge());
     }
 
     @Test

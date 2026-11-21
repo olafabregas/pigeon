@@ -13,7 +13,7 @@ class OutboxBackoffJitterTest {
 
     private static OutboxDispatcher dispatcher(double jitter) {
         OutboxProperties props = new OutboxProperties(true, 10, 100, 8, 1000, 300_000, jitter, 5000, 5000,
-                604_800_000, 3_600_000, 60_000,
+                604_800_000, -1, 3_600_000, 60_000,
                 new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
         return new OutboxDispatcher(null, null, null, new SimpleMeterRegistry(), props);

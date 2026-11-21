@@ -26,6 +26,13 @@ class OutboxPropertiesBindingTest {
     }
 
     @Test
+    void deadRetentionBindsAndKeepsDeadRowsForeverByDefault() {
+        runner.run(ctx -> assertThat(ctx.getBean(OutboxProperties.class).deadRetentionMs()).isEqualTo(-1L));
+        runner.withPropertyValues("pigeon.outbox.dead-retention-ms=86400000")
+                .run(ctx -> assertThat(ctx.getBean(OutboxProperties.class).deadRetentionMs()).isEqualTo(86_400_000L));
+    }
+
+    @Test
     void flywayIsDisabledByDefault() {
         runner.run(ctx -> assertThat(ctx.getBean(OutboxProperties.class).flyway().enabled()).isFalse());
     }

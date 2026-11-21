@@ -87,7 +87,7 @@ public class OutboxRepository {
     }
 
     public int markDead(UUID id, UUID claimToken, String error) {
-        return jdbc.update("UPDATE outbox_events SET status='DEAD', attempts=attempts+1, last_error=?, claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", error, id, claimToken);
+        return jdbc.update("UPDATE outbox_events SET status='DEAD', attempts=attempts+1, last_error=?, dead_at=now(), claim_token=NULL, claimed_at=NULL WHERE id=? AND status='PROCESSING' AND claim_token=?", error, id, claimToken);
     }
 
     /**
@@ -102,7 +102,7 @@ public class OutboxRepository {
     public int replayDead(UUID id) {
         return jdbc.update("""
                 UPDATE outbox_events
-                SET status='PENDING', attempts=0, next_attempt_at=now(), sent_at=NULL
+                SET status='PENDING', attempts=0, next_attempt_at=now(), sent_at=NULL, dead_at=NULL
                 WHERE id=? AND status='DEAD'
                 """, id);
     }
@@ -111,7 +111,7 @@ public class OutboxRepository {
     public int replayAllDead() {
         return jdbc.update("""
                 UPDATE outbox_events
-                SET status='PENDING', attempts=0, next_attempt_at=now(), sent_at=NULL
+                SET status='PENDING', attempts=0, next_attempt_at=now(), sent_at=NULL, dead_at=NULL
                 WHERE status='DEAD'
                 """);
     }
@@ -130,6 +130,11 @@ public class OutboxRepository {
 
     public int deleteSentBefore(OffsetDateTime cutoff) {
         return jdbc.update("DELETE FROM outbox_events WHERE status='SENT' AND sent_at < ?", cutoff);
+    }
+
+    /** Deletes DEAD rows that died before {@code cutoff}. Rows that are not DEAD are never touched. */
+    public int deleteDeadBefore(OffsetDateTime cutoff) {
+        return jdbc.update("DELETE FROM outbox_events WHERE status='DEAD' AND dead_at < ?", cutoff);
     }
 
     /** Age in seconds of oldest PENDING or PROCESSING event, 0 if none. */
