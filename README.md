@@ -75,6 +75,7 @@ pigeon:
       enabled: true
     sent-retention-ms: 604800000
     claim-lease-ms: 60000
+    backoff-jitter: 0.2
     flyway:
       enabled: true
       locations: classpath:db/pigeon
@@ -96,6 +97,9 @@ The starter migration is opt-in. It runs separately from Spring Boot Flyway
 from `classpath:db/pigeon`, using `pigeon_schema_history`, so it does not
 compete with an application's `classpath:db/migration/V1__...` migration.
 Set `pigeon.outbox.flyway.enabled=false` to manage Pigeon SQL yourself.
+Retry delays are shortened by a random fraction of up to `backoff-jitter`
+(default `0.2`, set `0` to disable) so events that failed together do not retry
+at the same moment. The failure reason is stored in `outbox_events.last_error`.
 Confirmed `SENT` rows are retained for seven days by default and then purged
 hourly. Adjust `sent-retention-ms` or set it to `0` for immediate cleanup.
 
@@ -141,6 +145,28 @@ The dispatcher claims rows in a short database transaction, releases the row
 locks before waiting for RabbitMQ confirms, and finalizes each event in its own
 transaction. A claimed row is leased for `pigeon.outbox.claim-lease-ms`
 (default 60 seconds) and becomes claimable again if a process crashes.
+
+## Logging
+
+The success path is quiet by default. Polling runs every 500 ms, so per-batch lines
+are `DEBUG`. To see the happy path, set:
+
+```yaml
+logging:
+  level:
+    io.pigeon: DEBUG
+```
+
+| Level | Message | Meaning |
+|---|---|---|
+| INFO | `pigeon outbox started: exchange=… batchSize=… pollIntervalMs=…` | Dispatcher is running |
+| WARN | `pigeon outbox is NOT dispatching: set pigeon.outbox.scheduling.enabled=true` | Scheduling is off; nothing will be published |
+| DEBUG | `claimed N outbox event(s) token=…` | A batch was claimed |
+| DEBUG | `event ID sent type=… attempts=… latencyMs=…` | Broker confirmed the publish |
+| WARN | `event ID publish failed (attempt N/MAX), retrying in MS ms` | Permanent failure, backing off |
+| ERROR | `outbox event ID DEAD after N attempts …` | Retries exhausted; event is `DEAD` and dead-lettered |
+| WARN | `reclaimed N expired PROCESSING event(s)` | An instance crashed or stalled mid-batch; its rows were taken over |
+| INFO | `replayed dead event ID` / `replayed N dead event(s)` | Someone replayed DEAD events |
 
 ## Try the demo
 
@@ -204,7 +230,8 @@ Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 - `Outbox.write(...)` in the same transaction as your domain write
 - Flyway migration for `outbox_events` under `db/pigeon`, isolated from app migrations
 - In-process poller with leased `SELECT ... FOR UPDATE SKIP LOCKED` claims
-- RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → backoff → `DEAD` + DLQ
+- RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → jittered backoff → `DEAD` + DLQ
+- `last_error` on each row says why the latest publish failed, including on `DEAD` rows
 - At-least-once delivery with an event `messageId`; consumers must be idempotent
 - Replay DEAD events via demo-only API / `Outbox.replay*`
 - Micrometer metrics: `pending`, `lag`, `dead`, dispatch latency, `dispatched{sent|deferred|failed|dead}`

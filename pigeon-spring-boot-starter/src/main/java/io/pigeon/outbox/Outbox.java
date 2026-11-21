@@ -2,6 +2,8 @@ package io.pigeon.outbox;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.UUID;
@@ -11,6 +13,8 @@ import java.util.UUID;
  * Use {@link #replayDead} / {@link #replayAllDead} to requeue exhausted events after an outage.
  */
 public class Outbox {
+    private static final Logger log = LoggerFactory.getLogger(Outbox.class);
+
     private final OutboxRepository repository;
     private final ObjectMapper objectMapper;
 
@@ -38,11 +42,17 @@ public class Outbox {
 
     /** Requeue one DEAD event as PENDING (attempts reset). Returns true if a row was updated. */
     public boolean replayDead(UUID id) {
-        return repository.replayDead(id) > 0;
+        boolean replayed = repository.replayDead(id) > 0;
+        if (replayed) {
+            log.info("replayed dead event {}", id);
+        }
+        return replayed;
     }
 
     /** Requeue all DEAD events as PENDING. Returns how many rows were updated. */
     public int replayAllDead() {
-        return repository.replayAllDead();
+        int replayed = repository.replayAllDead();
+        log.info("replayed {} dead event(s)", replayed);
+        return replayed;
     }
 }

@@ -130,8 +130,10 @@ public class OutboxAutoConfiguration {
     @ConditionalOnMissingBean
     @ConditionalOnProperty(name = "pigeon.outbox.enabled", havingValue = "true", matchIfMissing = true)
     @ConditionalOnBean(OutboxDispatcher.class)
-    OutboxScheduler outboxScheduler(OutboxDispatcher dispatcher, OutboxProperties props) {
-        return new OutboxScheduler(dispatcher, props);
+    OutboxScheduler outboxScheduler(OutboxDispatcher dispatcher, OutboxProperties props,
+                                    org.springframework.core.env.Environment environment) {
+        boolean schedulingEnabled = environment.getProperty("pigeon.outbox.scheduling.enabled", Boolean.class, false);
+        return new OutboxScheduler(dispatcher, props, schedulingEnabled);
     }
 
     public static final class OutboxScheduler {
@@ -139,9 +141,15 @@ public class OutboxAutoConfiguration {
         private final OutboxDispatcher dispatcher;
         private final OutboxProperties props;
 
-        OutboxScheduler(OutboxDispatcher dispatcher, OutboxProperties props) {
+        OutboxScheduler(OutboxDispatcher dispatcher, OutboxProperties props, boolean schedulingEnabled) {
             this.dispatcher = dispatcher;
             this.props = props;
+            if (schedulingEnabled) {
+                log.info("pigeon outbox started: exchange={} batchSize={} pollIntervalMs={}",
+                        props.exchange(), props.batchSize(), props.pollIntervalMs());
+            } else {
+                log.warn("pigeon outbox is NOT dispatching: set pigeon.outbox.scheduling.enabled=true");
+            }
         }
 
         @Scheduled(fixedDelayString = "${pigeon.outbox.poll-interval-ms:500}")
