@@ -27,6 +27,7 @@ it to RabbitMQ.
 - **Isolated migrations:** the opt-in Flyway migrations (`V10000`, `V10001`) use their own location
   (`db/pigeon`) and history table (`pigeon_schema_history`).
 - **Runs by default, on its own threads:** the dispatcher and the SENT-row cleanup start with the application and stop with it, without enabling `@EnableScheduling` for the host app. Set `pigeon.outbox.scheduling.enabled=false` for write-only instances.
+- **Payload validation:** `Outbox.write(..., String)` checks that the text is valid JSON before writing and fails with a clear `IllegalArgumentException`, rather than a database error that aborts your transaction. The message does not echo the payload.
 - **Failure reasons:** `outbox_events.last_error` records why the latest publish failed, and survives on `DEAD` rows.
 - **Jittered backoff:** retry delays are randomly shortened by up to `pigeon.outbox.backoff-jitter` (default `0.2`) so failed events do not retry in lockstep.
 - **Operational logging:** quiet by default; set `logging.level.io.pigeon=DEBUG` to see claims and sends. Retries, reclaimed leases, DEAD events and replays are always logged.

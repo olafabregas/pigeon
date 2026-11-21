@@ -133,6 +133,14 @@ outbox.write("user", userId, "user.registered", payload);
 outbox.write("shipment", shipmentId, "shipment.updated", payload);
 ```
 
+`write` has two overloads. Pass an **object** (a `Map`, record or POJO) and Pigeon
+serializes it with Jackson. Pass a **`String`** and it is treated as ready-made
+JSON text and stored as-is, so it must already be valid JSON. Invalid JSON is
+rejected immediately with an `IllegalArgumentException` (the message never
+includes the payload), instead of a database error that aborts your transaction.
+To send a plain string as a JSON string, pass it typed as `Object` or quote it
+yourself. Calling `write` outside a transaction throws `IllegalStateException`.
+
 ### Broker down and DEAD events
 
 - **Broker unavailable / confirm timeout** → event stays `PENDING` (soft retry). Attempts are **not** burned.
