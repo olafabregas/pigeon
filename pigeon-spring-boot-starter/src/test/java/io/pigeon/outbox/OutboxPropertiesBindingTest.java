@@ -26,6 +26,28 @@ class OutboxPropertiesBindingTest {
     }
 
     @Test
+    void deadRetentionBindsAndKeepsDeadRowsForeverByDefault() {
+        runner.run(ctx -> assertThat(ctx.getBean(OutboxProperties.class).deadRetentionMs()).isEqualTo(-1L));
+        runner.withPropertyValues("pigeon.outbox.dead-retention-ms=86400000")
+                .run(ctx -> assertThat(ctx.getBean(OutboxProperties.class).deadRetentionMs()).isEqualTo(86_400_000L));
+    }
+
+    @Test
+    void healthSettingsBindWithDefaults() {
+        runner.run(ctx -> {
+            OutboxProperties.Health health = ctx.getBean(OutboxProperties.class).health();
+            assertThat(health.enabled()).isTrue();
+            assertThat(health.maxLagSeconds()).isEqualTo(300L);
+        });
+        runner.withPropertyValues("pigeon.outbox.health.enabled=false", "pigeon.outbox.health.max-lag-seconds=60")
+                .run(ctx -> {
+                    OutboxProperties.Health health = ctx.getBean(OutboxProperties.class).health();
+                    assertThat(health.enabled()).isFalse();
+                    assertThat(health.maxLagSeconds()).isEqualTo(60L);
+                });
+    }
+
+    @Test
     void flywayIsDisabledByDefault() {
         runner.run(ctx -> assertThat(ctx.getBean(OutboxProperties.class).flyway().enabled()).isFalse());
     }

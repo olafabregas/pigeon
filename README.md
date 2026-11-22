@@ -56,7 +56,7 @@ directly from the Git tag. Add the repository and the dependency:
 <dependency>
   <groupId>com.github.olafabregas.pigeon</groupId>
   <artifactId>pigeon-spring-boot-starter</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
 </dependency>
 ```
 
@@ -71,19 +71,21 @@ spring:
 pigeon:
   outbox:
     enabled: true
-    scheduling:
-      enabled: true
     sent-retention-ms: 604800000
     claim-lease-ms: 60000
+    backoff-jitter: 0.2
     flyway:
       enabled: true
       locations: classpath:db/pigeon
       table: pigeon_schema_history
 ```
 
-> **Required:** `pigeon.outbox.scheduling.enabled: true`. It has no default, and
-> without it the dispatcher never starts, so events are written to the outbox
-> but never published.
+The dispatcher runs by default on Pigeon's own threads, so it does not turn on
+`@EnableScheduling` for the rest of your application. To run an instance that
+only writes events and leaves publishing to other instances, set
+`pigeon.outbox.scheduling.enabled: false`. That instance logs a notice at
+startup. Setting `pigeon.outbox.enabled: false` turns Pigeon's dispatcher off
+entirely.
 
 Pigeon soft-defaults `publisher-confirm-type: correlated`, `publisher-returns: true`, and `template.mandatory: true` when you have not set them. Explicit values in your `application.yml` always win.
 
@@ -96,6 +98,9 @@ The starter migration is opt-in. It runs separately from Spring Boot Flyway
 from `classpath:db/pigeon`, using `pigeon_schema_history`, so it does not
 compete with an application's `classpath:db/migration/V1__...` migration.
 Set `pigeon.outbox.flyway.enabled=false` to manage Pigeon SQL yourself.
+Retry delays are shortened by a random fraction of up to `backoff-jitter`
+(default `0.2`, set `0` to disable) so events that failed together do not retry
+at the same moment. The failure reason is stored in `outbox_events.last_error`.
 Confirmed `SENT` rows are retained for seven days by default and then purged
 hourly. Adjust `sent-retention-ms` or set it to `0` for immediate cleanup.
 
@@ -128,11 +133,25 @@ outbox.write("user", userId, "user.registered", payload);
 outbox.write("shipment", shipmentId, "shipment.updated", payload);
 ```
 
+`write` has two overloads. Pass an **object** (a `Map`, record or POJO) and Pigeon
+serializes it with Jackson. Pass a **`String`** and it is treated as ready-made
+JSON text and stored as-is, so it must already be valid JSON. Invalid JSON is
+rejected immediately with an `IllegalArgumentException` (the message never
+includes the payload), instead of a database error that aborts your transaction.
+To send a plain string as a JSON string, pass it typed as `Object` or quote it
+yourself. Calling `write` outside a transaction throws `IllegalStateException`.
+
 ### Broker down and DEAD events
 
 - **Broker unavailable / confirm timeout** → event stays `PENDING` (soft retry). Attempts are **not** burned.
 - **Permanent failure** (nack, unroutable) → attempts increment → `DEAD` after `max-attempts`, plus DLQ.
 - **Replay DEAD:** `Outbox.replayDead(id)` / `Outbox.replayAllDead()` (demo HTTP below).
+
+`DEAD` rows are kept indefinitely by default, because they are undelivered
+events you may still want to replay (a copy also goes to the dead-letter queue).
+Set `pigeon.outbox.dead-retention-ms` to purge them after a while. The clock
+starts when the event died, and restarts if you replay it and it dies again.
+Purging is logged at `WARN`, since a purged event can no longer be replayed.
 
 The replay HTTP endpoints are demo-only, are not authenticated, and should
 not be exposed in production.
@@ -141,6 +160,105 @@ The dispatcher claims rows in a short database transaction, releases the row
 locks before waiting for RabbitMQ confirms, and finalizes each event in its own
 transaction. A claimed row is leased for `pigeon.outbox.claim-lease-ms`
 (default 60 seconds) and becomes claimable again if a process crashes.
+
+On shutdown the dispatcher stops claiming, lets the in-flight batch finish
+(up to `confirm-timeout-ms` plus 5 seconds), then interrupts it. Events from a
+batch that ends early are handed straight back to `PENDING` instead of waiting
+out the lease.
+
+## Configuration
+
+All settings live under `pigeon.outbox`. Every one is optional.
+
+| Property | Default | What it does |
+|---|---|---|
+| `enabled` | `true` | Master switch for Pigeon's dispatcher |
+| `scheduling.enabled` | `true` | Set `false` on instances that should only write events and leave publishing to others |
+| `batch-size` | `50` | Events claimed per poll |
+| `poll-interval-ms` | `500` | Delay between polls |
+| `claim-lease-ms` | `60000` | How long a claimed row is held before another instance may take it |
+| `max-attempts` | `8` | Permanent failures before an event becomes `DEAD` |
+| `base-backoff-ms` | `1000` | First retry delay after a permanent failure; doubles each attempt |
+| `max-backoff-ms` | `300000` | Upper bound for the retry delay |
+| `backoff-jitter` | `0.2` | Random fraction (0–1) shaved off each retry delay so retries don't synchronize; `0` disables |
+| `confirm-timeout-ms` | `5000` | How long to wait for a broker confirm before treating it as transient |
+| `broker-down-backoff-ms` | `5000` | Retry delay when the broker is unreachable (does not use up attempts) |
+| `sent-retention-ms` | `604800000` | How long `SENT` rows are kept (7 days); `0` purges immediately |
+| `dead-retention-ms` | `-1` | How long `DEAD` rows are kept, counted from when they died. Negative keeps them forever (the default); `0` purges immediately |
+| `sent-cleanup-interval-ms` | `3600000` | How often `SENT` and expired `DEAD` rows are purged |
+| `exchange` | `pigeon.events` | Topic exchange events are published to; the routing key is the `eventType` |
+| `dead-letter-exchange` | `pigeon.dlx` | Exchange for `DEAD` events |
+| `dead-letter-queue` | `pigeon.dlq` | Queue bound to the dead-letter exchange with `dead.#` |
+| `health.enabled` | `true` | Register the Actuator health indicator (when Actuator is present) |
+| `health.max-lag-seconds` | `300` | Report `DOWN` when the oldest undelivered event is older than this; `0` disables the check |
+| `flyway.enabled` | `false` | Run Pigeon's own migration (opt-in) |
+| `flyway.locations` | `classpath:db/pigeon` | Where Pigeon's migrations live |
+| `flyway.table` | `pigeon_schema_history` | Flyway history table, separate from your application's |
+
+## Metrics
+
+Registered with Micrometer, so they appear in Actuator and Prometheus
+(`pigeon.outbox.pending` becomes `pigeon_outbox_pending`).
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `pigeon.outbox.pending` | gauge | `PENDING` and `PROCESSING` events |
+| `pigeon.outbox.dead` | gauge | `DEAD` events |
+| `pigeon.outbox.lag.seconds` | gauge | Age of the oldest `PENDING` or `PROCESSING` event |
+| `pigeon.outbox.dispatch.latency` | timer | Time from event creation to confirmed publish |
+| `pigeon.outbox.dispatched` | counter | Dispatch outcomes, tagged `result` = `sent`, `deferred`, `failed` or `dead` |
+
+## Health
+
+With Spring Boot Actuator on the classpath, Pigeon adds a `pigeonOutbox` entry to
+`/actuator/health` (turn on `management.endpoint.health.show-details` to see the
+details). It reports `DOWN` when:
+
+- the dispatcher is not running, or
+- the oldest undelivered event is older than `health.max-lag-seconds` (default 300).
+
+```json
+"pigeonOutbox": {
+  "status": "UP",
+  "details": { "dispatching": "running", "pending": 3, "dead": 0, "lagSeconds": 2, "maxLagSeconds": 300 }
+}
+```
+
+`DEAD` events are reported but never fail the check: they need your attention,
+but the service itself is working. An instance with
+`scheduling.enabled: false` always reports `UP`, because another instance owns
+publishing. If you raise `max-attempts` or `max-backoff-ms` a lot, raise
+`max-lag-seconds` too, since a single failing event can legitimately stay queued
+that long.
+
+This indicator is not part of the Kubernetes liveness or readiness groups unless
+you add it. Keep it out of liveness: a stuck backlog usually means the broker is
+down, and restarting your pods will not fix that.
+
+## Logging
+
+The success path is quiet by default. Polling runs every 500 ms, so per-batch lines
+are `DEBUG`. To see the happy path, set:
+
+```yaml
+logging:
+  level:
+    io.pigeon: DEBUG
+```
+
+| Level | Message | Meaning |
+|---|---|---|
+| INFO | `pigeon outbox started: exchange=… batchSize=… pollIntervalMs=…` | Dispatcher is running |
+| INFO | `pigeon outbox dispatching is disabled (pigeon.outbox.scheduling.enabled=false) …` | This instance writes events but does not publish them |
+| INFO | `pigeon outbox stopped` | The dispatcher shut down with the application |
+| DEBUG | `claimed N outbox event(s) token=…` | A batch was claimed |
+| DEBUG | `event ID sent type=… attempts=… latencyMs=…` | Broker confirmed the publish |
+| WARN | `event ID publish failed (attempt N/MAX), retrying in MS ms` | Permanent failure, backing off |
+| ERROR | `outbox event ID DEAD after N attempts …` | Retries exhausted; event is `DEAD` and dead-lettered |
+| WARN | `released N claimed outbox event(s) back to PENDING after an unfinished batch` | A batch ended early (shutdown or a database error); its rows were handed back immediately |
+| WARN | `purged N DEAD outbox event(s) older than MS ms; they can no longer be replayed` | `dead-retention-ms` removed undelivered events |
+| WARN | `reclaimed N expired PROCESSING event(s)` | An instance crashed or stalled mid-batch; its rows were taken over |
+| INFO | `replayed dead event ID` / `replayed N dead event(s)` | Someone replayed DEAD events |
 
 ## Try the demo
 
@@ -204,14 +322,16 @@ Hands-on checklist: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 - `Outbox.write(...)` in the same transaction as your domain write
 - Flyway migration for `outbox_events` under `db/pigeon`, isolated from app migrations
 - In-process poller with leased `SELECT ... FOR UPDATE SKIP LOCKED` claims
-- RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → backoff → `DEAD` + DLQ
+- RabbitMQ publisher confirms; broker-down soft-retries; permanent failures → jittered backoff → `DEAD` + DLQ
+- `last_error` on each row says why the latest publish failed, including on `DEAD` rows
 - At-least-once delivery with an event `messageId`; consumers must be idempotent
+- Starts with your app on its own threads, and shuts down cleanly without stranding claimed events
 - Replay DEAD events via demo-only API / `Outbox.replay*`
 - Micrometer metrics: `pending`, `lag`, `dead`, dispatch latency, `dispatched{sent|deferred|failed|dead}`
 
 ## Stack
 
-Java 21, Spring Boot 3, PostgreSQL, RabbitMQ. That is the supported surface for v1.
+Java 21, Spring Boot 3 (built and tested against 3.5.16), PostgreSQL, RabbitMQ. That is the supported surface for v1. Spring Boot 4 is not supported yet.
 
 ## License
 

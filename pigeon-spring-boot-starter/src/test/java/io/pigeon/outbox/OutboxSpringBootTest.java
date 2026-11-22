@@ -37,6 +37,7 @@ class OutboxSpringBootTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.flyway.locations", () -> "classpath:db/migration");
+        registry.add("pigeon.outbox.scheduling.enabled", () -> "false");
         registry.add("pigeon.outbox.flyway.enabled", () -> "true");
         registry.add("pigeon.outbox.flyway.locations", () -> "classpath:db/pigeon");
         registry.add("pigeon.outbox.flyway.table", () -> "pigeon_schema_history");

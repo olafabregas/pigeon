@@ -78,10 +78,11 @@ class OutboxSkipLockedTest {
     }
 
     private static OutboxProperties props(int batch, int maxAttempts) {
-        return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 1000, 5,
-                604_800_000, 3_600_000,
+        return new OutboxProperties(true, batch, 100, maxAttempts, 1, 5, 0.0, 1000, 5,
+                604_800_000, -1, 3_600_000,
                 60_000,
                 new OutboxProperties.Flyway(false, "classpath:db/pigeon", "pigeon_schema_history"),
+                new OutboxProperties.Health(true, 300),
                 "pigeon.events", "pigeon.dlx", "pigeon.dlq");
     }
 
@@ -192,6 +193,271 @@ class OutboxSkipLockedTest {
                 .isEqualTo("PENDING");
         assertThat(jdbc.queryForObject("SELECT attempts FROM outbox_events WHERE id=?", Integer.class, id))
                 .isEqualTo(0);
+    }
+
+    private static OutboxPublisher failingWith(PublishOutcome outcome, String error) {
+        return new OutboxPublisher() {
+            public PublishBatchResult publish(List<OutboxEvent> events) {
+                return PublishBatchResult.all(events, outcome, error);
+            }
+
+            public void deadLetter(OutboxEvent event) {
+            }
+        };
+    }
+
+    private static String lastError(UUID id) {
+        return jdbc.queryForObject("SELECT last_error FROM outbox_events WHERE id=?", String.class, id);
+    }
+
+    @Test
+    void permanentFailureRecordsLastErrorAndKeepsEventPending() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "le1", "order.created", "{}");
+
+        dispatcher(failingWith(PublishOutcome.PERMANENT, "broker nacked the publish"), props(10, 3)).dispatchBatch();
+
+        assertThat(lastError(id)).isEqualTo("broker nacked the publish");
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("PENDING");
+    }
+
+    @Test
+    void transientFailureRecordsLastErrorWithoutBurningAttempts() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "le2", "order.created", "{}");
+
+        dispatcher(failingWith(PublishOutcome.TRANSIENT, "broker unreachable"), props(10, 3)).dispatchBatch();
+
+        assertThat(lastError(id)).isEqualTo("broker unreachable");
+        assertThat(jdbc.queryForObject("SELECT attempts FROM outbox_events WHERE id=?", Integer.class, id))
+                .isEqualTo(0);
+    }
+
+    @Test
+    void deadEventExplainsWhyAndErrorSurvivesReplayUntilDelivered() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID id = repo.insert("order", "le3", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET attempts=2 WHERE id=?", id);
+
+        dispatcher(failingWith(PublishOutcome.PERMANENT, "unroutable: NO_ROUTE"), props(10, 3)).dispatchBatch();
+
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("DEAD");
+        assertThat(lastError(id)).isEqualTo("unroutable: NO_ROUTE");
+
+        new Outbox(repo, new com.fasterxml.jackson.databind.ObjectMapper()).replayDead(id);
+        assertThat(lastError(id)).isEqualTo("unroutable: NO_ROUTE");
+
+        dispatcher(new RecordingPublisher(), props(10, 3)).dispatchBatch();
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("SENT");
+        assertThat(lastError(id)).isNull();
+    }
+
+    @Test
+    void missingFailureReasonFallsBackToOutcomeName() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "le4", "order.created", "{}");
+
+        dispatcher(failingWith(PublishOutcome.PERMANENT, null), props(10, 3)).dispatchBatch();
+
+        assertThat(lastError(id)).isEqualTo("publish failed (PERMANENT)");
+    }
+
+    @Test
+    void overlongFailureReasonIsTruncated() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "le5", "order.created", "{}");
+
+        dispatcher(failingWith(PublishOutcome.PERMANENT, "x".repeat(5000)), props(10, 3)).dispatchBatch();
+
+        assertThat(lastError(id)).hasSize(1000);
+    }
+
+    @Test
+    void failureWhileFinalizingReleasesTheRestOfTheBatchImmediately() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository real = new OutboxRepository(jdbc);
+        for (int i = 0; i < 3; i++) {
+            real.insert("order", "rel" + i, "order.created", "{}");
+        }
+        java.util.concurrent.atomic.AtomicInteger sent = new java.util.concurrent.atomic.AtomicInteger();
+        OutboxRepository flaky = new OutboxRepository(jdbc) {
+            @Override
+            public int markSent(UUID id, UUID claimToken) {
+                if (sent.incrementAndGet() == 2) {
+                    throw new IllegalStateException("database blip");
+                }
+                return super.markSent(id, claimToken);
+            }
+        };
+        OutboxDispatcher d = new OutboxDispatcher(flaky, new RecordingPublisher(), new TransactionTemplate(tm),
+                new SimpleMeterRegistry(), props(10, 5));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(d::dispatchBatch)
+                .isInstanceOf(IllegalStateException.class);
+
+        // Nothing is left leased: one SENT, the other two straight back to PENDING with attempts untouched.
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE status='PROCESSING'", Integer.class))
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE status='SENT'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE status='PENDING' AND attempts=0 AND claim_token IS NULL",
+                Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void releasingAnAlreadyFinalizedBatchChangesNothing() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID id = repo.insert("order", "rel-noop", "order.created", "{}");
+        UUID token = UUID.randomUUID();
+        assertThat(repo.claimBatch(1, token, 60_000)).hasSize(1);
+        repo.markSent(id, token);
+
+        assertThat(repo.releaseClaim(token)).isZero();
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("SENT");
+    }
+
+    @Test
+    void stoppingWhileAPublishIsInFlightReleasesTheEventWithoutWaitingForTheLease() throws Exception {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "stop1", "order.created", "{}");
+        java.util.concurrent.CountDownLatch publishing = new java.util.concurrent.CountDownLatch(1);
+        OutboxPublisher blocking = new OutboxPublisher() {
+            public PublishBatchResult publish(List<OutboxEvent> events) {
+                publishing.countDown();
+                try {
+                    Thread.sleep(60_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                // Like the real publisher: an interrupted confirm wait is a transient failure.
+                return PublishBatchResult.all(events, PublishOutcome.TRANSIENT, "interrupted");
+            }
+
+            public void deadLetter(OutboxEvent event) {
+            }
+        };
+        OutboxScheduler scheduler = new OutboxScheduler(dispatcher(blocking, props(10, 5)),
+                org.mockito.Mockito.mock(OutboxCleanup.class), props(10, 5), 200);
+        scheduler.start();
+        assertThat(publishing.await(10, TimeUnit.SECONDS)).isTrue();
+
+        long started = System.nanoTime();
+        scheduler.stop();
+        long stopMs = (System.nanoTime() - started) / 1_000_000;
+
+        assertThat(stopMs).isLessThan(5_000);
+        assertThat(scheduler.isRunning()).isFalse();
+        // Leased for 60s, yet immediately claimable again: it was handed back, not left PROCESSING.
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject("SELECT claim_token FROM outbox_events WHERE id=?", UUID.class, id))
+                .isNull();
+        assertThat(jdbc.queryForObject("SELECT attempts FROM outbox_events WHERE id=?", Integer.class, id))
+                .isZero();
+    }
+
+    private static OutboxPublisher alwaysPermanentFailure() {
+        return failingWith(PublishOutcome.PERMANENT, "nack");
+    }
+
+    @Test
+    void becomingDeadStampsDeadAt() {
+        jdbc.update("DELETE FROM outbox_events");
+        UUID id = new OutboxRepository(jdbc).insert("order", "dd1", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET attempts=2 WHERE id=?", id);
+
+        dispatcher(alwaysPermanentFailure(), props(10, 3)).dispatchBatch();
+
+        assertThat(jdbc.queryForObject("SELECT status FROM outbox_events WHERE id=?", String.class, id))
+                .isEqualTo("DEAD");
+        assertThat(jdbc.queryForObject("SELECT dead_at IS NOT NULL FROM outbox_events WHERE id=?", Boolean.class, id))
+                .isTrue();
+    }
+
+    @Test
+    void replayClearsDeadAtSoARedeadedEventStartsItsRetentionAgain() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID one = repo.insert("order", "dd2", "order.created", "{}");
+        UUID two = repo.insert("order", "dd3", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET status='DEAD', dead_at=now() - interval '30 days'");
+
+        repo.replayDead(one);
+        assertThat(jdbc.queryForObject("SELECT dead_at FROM outbox_events WHERE id=?", Object.class, one)).isNull();
+        assertThat(jdbc.queryForObject("SELECT dead_at FROM outbox_events WHERE id=?", Object.class, two)).isNotNull();
+
+        repo.replayAllDead();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE dead_at IS NOT NULL", Integer.class))
+                .isZero();
+    }
+
+    @Test
+    void deleteDeadBeforeRemovesOnlyDeadRowsThatDiedBeforeTheCutoff() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID oldDead = repo.insert("order", "old-dead", "order.created", "{}");
+        UUID recentDead = repo.insert("order", "recent-dead", "order.created", "{}");
+        UUID oldPending = repo.insert("order", "old-pending", "order.created", "{}");
+        UUID oldSent = repo.insert("order", "old-sent", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET status='DEAD', dead_at=now() - interval '10 days' WHERE id=?", oldDead);
+        jdbc.update("UPDATE outbox_events SET status='DEAD', dead_at=now() - interval '1 hour' WHERE id=?", recentDead);
+        jdbc.update("UPDATE outbox_events SET created_at=now() - interval '30 days' WHERE id=?", oldPending);
+        jdbc.update("UPDATE outbox_events SET status='SENT', sent_at=now() - interval '30 days' WHERE id=?", oldSent);
+
+        int deleted = repo.deleteDeadBefore(java.time.OffsetDateTime.now().minusDays(7));
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(jdbc.queryForList("SELECT id FROM outbox_events", UUID.class))
+                .containsExactlyInAnyOrder(recentDead, oldPending, oldSent);
+    }
+
+    @Test
+    void deadAtMigrationBackfillsExistingDeadRowsOnly() {
+        jdbc.execute("DROP DATABASE IF EXISTS backfill_test");
+        jdbc.execute("CREATE DATABASE backfill_test");
+        String url = pg.getJdbcUrl().replace("/" + pg.getDatabaseName(), "/backfill_test");
+        Flyway.configure().dataSource(url, pg.getUsername(), pg.getPassword())
+                .locations("classpath:db/pigeon").target("10001").load().migrate();
+        JdbcTemplate old = new JdbcTemplate(new DriverManagerDataSource(url, pg.getUsername(), pg.getPassword()));
+        for (String status : List.of("DEAD", "PENDING", "SENT")) {
+            old.update("INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status) "
+                    + "VALUES (?, 'order', ?, 'order.created', '{}'::jsonb, ?)", UUID.randomUUID(), status, status);
+        }
+
+        Flyway.configure().dataSource(url, pg.getUsername(), pg.getPassword())
+                .locations("classpath:db/pigeon").load().migrate();
+
+        assertThat(old.queryForObject("SELECT dead_at IS NOT NULL FROM outbox_events WHERE status='DEAD'", Boolean.class))
+                .isTrue();
+        assertThat(old.queryForObject("SELECT count(*) FROM outbox_events WHERE status<>'DEAD' AND dead_at IS NOT NULL",
+                Integer.class)).isZero();
+    }
+
+    @Test
+    void healthIsDownWhenARealEventHasBeenWaitingTooLong() {
+        jdbc.update("DELETE FROM outbox_events");
+        OutboxRepository repo = new OutboxRepository(jdbc);
+        UUID stuck = repo.insert("order", "health1", "order.created", "{}");
+        jdbc.update("UPDATE outbox_events SET created_at = now() - interval '1 hour' WHERE id=?", stuck);
+        OutboxScheduler running = org.mockito.Mockito.mock(OutboxScheduler.class);
+        org.mockito.Mockito.when(running.isRunning()).thenReturn(true);
+        OutboxHealthIndicator indicator = new OutboxHealthIndicator(repo, props(10, 5), running);
+
+        org.springframework.boot.actuate.health.Health health = indicator.health();
+
+        assertThat(health.getStatus()).isEqualTo(org.springframework.boot.actuate.health.Status.DOWN);
+        assertThat(health.getDetails()).containsEntry("pending", 1L);
+        assertThat((Long) health.getDetails().get("lagSeconds")).isGreaterThanOrEqualTo(3600L);
+
+        jdbc.update("UPDATE outbox_events SET status='SENT', sent_at=now() WHERE id=?", stuck);
+        assertThat(indicator.health().getStatus()).isEqualTo(org.springframework.boot.actuate.health.Status.UP);
     }
 
     @Test

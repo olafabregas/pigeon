@@ -48,11 +48,12 @@ public class RabbitOutboxPublisher implements OutboxPublisher {
         if (!brokerReachable()) {
             log.warn("broker unreachable; deferring {} outbox event(s) without burning attempts", events.size());
             resetSuggested.set(true);
-            return PublishBatchResult.all(events, PublishOutcome.TRANSIENT);
+            return PublishBatchResult.all(events, PublishOutcome.TRANSIENT, "broker unreachable");
         }
 
         Map<UUID, CorrelationData> pending = new HashMap<>();
         Map<UUID, PublishOutcome> outcomes = new HashMap<>();
+        Map<UUID, String> errors = new HashMap<>();
         boolean resetAfterSendFailure = false;
         for (OutboxEvent e : events) {
             try {
@@ -65,6 +66,7 @@ public class RabbitOutboxPublisher implements OutboxPublisher {
                         ? PublishOutcome.TRANSIENT
                         : PublishOutcome.PERMANENT;
                 outcomes.put(e.id(), outcome);
+                errors.put(e.id(), "send failed: " + ex);
                 log.warn("publish send failed for {} ({}): {}", e.id(), outcome, ex.toString());
                 resetAfterSendFailure |= outcome == PublishOutcome.TRANSIENT;
             }
@@ -75,12 +77,17 @@ public class RabbitOutboxPublisher implements OutboxPublisher {
             if (sawConfirmTimeout) {
                 // Don't burn N × confirmTimeout waiting on a dead confirm channel.
                 outcomes.put(en.getKey(), PublishOutcome.TRANSIENT);
+                errors.put(en.getKey(), "not awaited: an earlier confirm in this batch timed out");
                 continue;
             }
             // Per-event timeout — do not share one deadline across the whole batch
             // (that made later events false-timeout and leave SENT stuck after outages).
-            PublishOutcome outcome = resolveConfirm(en.getKey(), en.getValue(), props.confirmTimeoutMs());
+            Resolution resolution = resolveConfirm(en.getKey(), en.getValue(), props.confirmTimeoutMs());
+            PublishOutcome outcome = resolution.outcome();
             outcomes.put(en.getKey(), outcome);
+            if (resolution.error() != null) {
+                errors.put(en.getKey(), resolution.error());
+            }
             if (outcome == PublishOutcome.TRANSIENT) {
                 sawConfirmTimeout = true;
             }
@@ -90,10 +97,24 @@ public class RabbitOutboxPublisher implements OutboxPublisher {
             resetSuggested.set(true);
             resetConnection(sawConfirmTimeout ? "confirm timeout" : "send failed");
         }
-        return PublishBatchResult.of(outcomes);
+        return PublishBatchResult.of(outcomes, errors);
     }
 
-    private PublishOutcome resolveConfirm(UUID id, CorrelationData cd, long timeoutMs) {
+    private record Resolution(PublishOutcome outcome, String error) {
+        static Resolution confirmed() {
+            return new Resolution(PublishOutcome.CONFIRMED, null);
+        }
+
+        static Resolution transientFailure(String error) {
+            return new Resolution(PublishOutcome.TRANSIENT, error);
+        }
+
+        static Resolution permanentFailure(String error) {
+            return new Resolution(PublishOutcome.PERMANENT, error);
+        }
+    }
+
+    private Resolution resolveConfirm(UUID id, CorrelationData cd, long timeoutMs) {
         try {
             CorrelationData.Confirm c = cd.getFuture().get(timeoutMs, TimeUnit.MILLISECONDS);
             if (c.isAck()) {
@@ -109,25 +130,28 @@ public class RabbitOutboxPublisher implements OutboxPublisher {
                     remaining -= (System.nanoTime() - started) / 1_000_000;
                 }
                 if (cd.getReturned() == null) {
-                    return PublishOutcome.CONFIRMED;
+                    return Resolution.confirmed();
                 }
             }
             log.warn("event {} not confirmed: ack={} returned={} reason={}",
                     id, c.isAck(), cd.getReturned() != null, c.getReason());
-            return PublishOutcome.PERMANENT;
+            String error = cd.getReturned() != null
+                    ? "unroutable: message returned by broker (" + cd.getReturned().getReplyText() + ")"
+                    : "broker nacked the publish" + (c.getReason() == null ? "" : ": " + c.getReason());
+            return Resolution.permanentFailure(error);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
-            return PublishOutcome.TRANSIENT;
+            return Resolution.transientFailure("interrupted while waiting for broker confirm");
         } catch (TimeoutException te) {
             log.warn("event {} confirm timed out (transient)", id);
-            return PublishOutcome.TRANSIENT;
+            return Resolution.transientFailure("broker confirm timed out after " + timeoutMs + " ms");
         } catch (Exception ex) {
             if (isTransient(ex)) {
                 log.warn("event {} confirm failed (transient): {}", id, ex.toString());
-                return PublishOutcome.TRANSIENT;
+                return Resolution.transientFailure("confirm failed: " + ex);
             }
             log.warn("event {} confirm failed (permanent): {}", id, ex.toString());
-            return PublishOutcome.PERMANENT;
+            return Resolution.permanentFailure("confirm failed: " + ex);
         }
     }
 
