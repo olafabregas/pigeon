@@ -1,0 +1,32 @@
+version: 2
+
+updates:
+  # Maven dependencies, including the Spring Boot parent.
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Moving to Spring Boot 4 is a deliberate project decision (it drops Boot 3 users),
+      # not something to arrive as an automatic pull request.
+      - dependency-name: "org.springframework.boot:spring-boot-starter-parent"
+        update-types:
+          - version-update:semver-major
+
+  # Actions used by the workflows in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"

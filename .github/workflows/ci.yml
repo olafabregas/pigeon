@@ -7,6 +7,11 @@ on:
   pull_request:
     branches:
       - main
+  # Weekly run on main, so a change in an upstream image or dependency shows up as a failure here
+  # instead of in the next pull request.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -1,0 +1,122 @@
+name: Release
+
+# Runs when a release tag such as v0.1.2 is pushed. It refuses to release anything that is not on main,
+# does not match the project version or changelog, or does not pass the full build. It then creates the
+# GitHub release from the changelog and triggers JitPack, checking that the artifact it serves is complete.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Verify, release and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Merge the change first, then tag the merged commit."
+            exit 1
+          fi
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Check the tag matches the versions in the repo
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          failed=0
+          for module in . pigeon-spring-boot-starter pigeon-core; do
+            found="$(./mvnw -q -B -ntp -f "$module/pom.xml" help:evaluate -Dexpression=project.version -DforceStdout | tail -n 1)"
+            if [ "$found" != "$version" ]; then
+              echo "::error::$module/pom.xml is version '$found' but the tag is v$version"
+              failed=1
+            fi
+          done
+          if ! grep -q "^## $version " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## $version' entry"
+            failed=1
+          fi
+          if ! grep -A1 '<artifactId>pigeon-spring-boot-starter</artifactId>' README.md | grep -qF "<version>$version</version>"; then
+            echo "::error::README.md's dependency snippet is not version $version"
+            failed=1
+          fi
+          exit $failed
+
+      - name: Build and run all tests
+        run: ./mvnw -B -ntp verify
+
+      - name: Create the GitHub release from the changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '$0 ~ "^## " v " " {found=1; next} /^## / && found {exit} found' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::the CHANGELOG entry for $version is empty"
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; leaving it as it is."
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Pigeon $version" --notes-file release-notes.md
+          fi
+
+      - name: Trigger JitPack and verify the artifact it serves
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          owner="${GITHUB_REPOSITORY%/*}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          base="https://jitpack.io/com/github/${owner}/${repo}/pigeon-spring-boot-starter/${version}"
+          jar="pigeon-spring-boot-starter-${version}.jar"
+
+          # The first request for a new version starts the JitPack build; it answers 404 until it is done.
+          code=000
+          for attempt in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "${base}/pigeon-spring-boot-starter-${version}.pom")"
+            if [ "$code" = "200" ]; then break; fi
+            echo "JitPack answered $code (attempt $attempt/60); waiting..."
+            sleep 20
+          done
+          if [ "$code" != "200" ]; then
+            echo "::error::JitPack did not produce ${version} in time. Open https://jitpack.io/#${owner}/${repo} to see the build log."
+            exit 1
+          fi
+
+          curl -sfL -o "$RUNNER_TEMP/$jar" "${base}/${jar}"
+          listing="$(unzip -l "$RUNNER_TEMP/$jar")"
+          missing=0
+          for entry in META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports io/pigeon/outbox/OutboxAutoConfiguration.class; do
+            if ! grep -q "$entry" <<< "$listing"; then
+              echo "::error::the JitPack jar is missing $entry"
+              missing=1
+            fi
+          done
+          for sql in pigeon-spring-boot-starter/src/main/resources/db/pigeon/*.sql; do
+            if ! grep -q "db/pigeon/$(basename "$sql")" <<< "$listing"; then
+              echo "::error::the JitPack jar is missing migration $(basename "$sql")"
+              missing=1
+            fi
+          done
+          exit $missing
